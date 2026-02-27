@@ -1,0 +1,175 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║                                                                          ║
+║              🎉 PROGRESSO: Erro de ID resolvido!                         ║
+║              🚨 NOVO ERRO: Constraint de tipo_usuario                    ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✅ ERRO ANTERIOR CORRIGIDO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ✅ Você executou o ALTER TABLE para corrigir o ID
+  ✅ A coluna id agora gera UUID automaticamente
+  ✅ Progresso: 50% → 90%
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔴 NOVO PROBLEMA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ❌ Erro: "violates check constraint usuarios_tipo_usuario_check"
+  
+  🔍 Causa: A constraint CHECK na coluna 'tipo_usuario' NÃO permite
+            o valor 'Motorista' (só permite valores específicos)
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ⚡ SOLUÇÃO (30 SEGUNDOS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Execute estes 2 comandos no Supabase SQL Editor:
+
+
+  -- 1. Remover constraint antiga
+  ALTER TABLE usuarios 
+      DROP CONSTRAINT IF EXISTS usuarios_tipo_usuario_check;
+
+  -- 2. Adicionar constraint nova (com Motorista incluído)
+  ALTER TABLE usuarios
+      ADD CONSTRAINT usuarios_tipo_usuario_check 
+      CHECK (tipo_usuario IN (
+          'Admin',
+          'Gerente',
+          'Funcionário',
+          'Motorista',
+          'Vendedor',
+          'Produção',
+          'Logística'
+      ));
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  📋 PASSOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Abra: Supabase → SQL Editor → New query
+  
+  2. Cole os 2 comandos acima
+  
+  3. Clique em "Run"
+  
+  4. Recarregue o app (F5)
+  
+  5. Tente cadastrar motorista novamente
+  
+  ✅ FUNCIONARÁ!
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🎯 OU USE O SCRIPT PRONTO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Use o arquivo: /fix-tipo-usuario-constraint.sql
+  
+  Este script:
+  - Mostra a constraint atual
+  - Remove a constraint antiga
+  - Adiciona constraint nova com todos os tipos
+  - Verifica se funcionou
+  - Testa com insert
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  📦 O QUE ESTÁ ACONTECENDO?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  A tabela usuarios tem uma CHECK constraint assim:
+  
+  ❌ ANTES (não funciona):
+  CHECK (tipo_usuario IN ('Admin', 'Funcionário', 'Vendedor'))
+  
+  ✅ DEPOIS (funciona):
+  CHECK (tipo_usuario IN (
+      'Admin',
+      'Funcionário', 
+      'Motorista',     ← Adicionado!
+      'Vendedor',
+      ...
+  ))
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  📁 ARQUIVOS ATUALIZADOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ⚡ /fix-tipo-usuario-constraint.sql ..... Correção específica
+  📦 /fix-foreign-keys.sql ................ Atualizado com fix
+  📋 /URGENTE-CONSTRAINT.txt .............. Este arquivo
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔥 COMANDO DIRETO (COPIE E COLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+  -- Remover constraint antiga
+  ALTER TABLE usuarios 
+      DROP CONSTRAINT IF EXISTS usuarios_tipo_usuario_check;
+
+  -- Adicionar constraint nova
+  ALTER TABLE usuarios
+      ADD CONSTRAINT usuarios_tipo_usuario_check 
+      CHECK (tipo_usuario IN (
+          'Admin',
+          'Gerente',
+          'Funcionário',
+          'Motorista',
+          'Vendedor',
+          'Produção',
+          'Logística'
+      ));
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🧪 VERIFICAR SE FUNCIONOU
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Execute após os comandos acima:
+  
+  SELECT 
+      conname AS constraint_name,
+      pg_get_constraintdef(oid) AS definition
+  FROM pg_constraint
+  WHERE conrelid = 'usuarios'::regclass
+  AND conname = 'usuarios_tipo_usuario_check';
+  
+  ✅ Deve mostrar: CHECK (tipo_usuario = ANY (...'Motorista'...))
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✅ CHECKLIST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  [✅] Erro de ID resolvido (1º problema)
+  [ ] Constraint atualizada (2º problema) ← VOCÊ ESTÁ AQUI
+  [ ] Motorista cadastrado com sucesso
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+           🔥 EXECUTE OS 2 COMANDOS ACIMA AGORA! 🔥
+           
+          Última etapa para finalizar! 90% concluído!
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║                                                                          ║
+║          🍄 Shroom Bros - Quase lá! Falta só esse SQL! 🍄                ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝

@@ -1,0 +1,114 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║                    🚚 CORRIGIR ERRO DE LOGÍSTICA                         ║
+║                         Shroom Bros - 2024                                ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+⚠️  ERRO ATUAL:
+    "Could not find a relationship between 'pedidos' and 'pedidos_itens'"
+
+🔧 SOLUÇÃO RÁPIDA (5 minutos):
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 PASSO 1: Abrir Supabase
+    1. Vá para https://supabase.com
+    2. Entre no seu projeto
+    3. Menu lateral → "SQL Editor"
+    4. Clique em "New query"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📄 PASSO 2: Copiar o Script CORRETO
+    1. Abra o arquivo: /fix-foreign-keys.sql
+    2. Selecione TODO o conteúdo (Ctrl+A)
+    3. Copie (Ctrl+C)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+▶️  PASSO 3: Executar
+    1. Cole no SQL Editor do Supabase (Ctrl+V)
+    2. Clique no botão "Run" (ou Ctrl+Enter)
+    3. Aguarde ~10 segundos
+
+    ⚠️  ATENÇÃO: Este script irá recriar as tabelas rotas e rotas_paradas
+    (você perderá dados existentes nelas, se houver)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ PASSO 4: Verificar Sucesso
+    Você deve ver esta mensagem no final:
+    
+    "Script executado com sucesso! Verifique as foreign keys acima."
+    
+    E uma tabela mostrando as foreign keys criadas:
+    
+    ┌─────────────────┬──────────────┬────────────────────┬─────────────────────┐
+    │ table_name      │ column_name  │ foreign_table_name │ foreign_column_name │
+    ├─────────────────┼──────────────┼────────────────────┼─────────────────────┤
+    │ rotas           │ motorista_id │ usuarios           │ id                  │
+    │ rotas_paradas   │ rota_id      │ rotas              │ id                  │
+    │ rotas_paradas   │ pedido_id    │ pedidos            │ id                  │
+    └─────────────────┴──────────────┴────────────────────┴─────────────────────┘
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎉 PASSO 5: Testar
+    1. Volte para o Figma Make
+    2. Recarregue a página (F5)
+    3. Acesse /motoristas e /logistica
+    4. Tudo funcionando! 🍄
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📦 O QUE FOI CRIADO:
+
+    ✓ Tabela: rotas (gestão de rotas de entrega)
+    ✓ Tabela: rotas_paradas (paradas de cada rota)
+    ✓ Campo: usuarios.tipo_usuario (identifica motoristas)
+    ✓ Campo: usuarios.cpf (CPF do motorista)
+    ✓ Campo: usuarios.cnh (CNH do motorista)
+    ✓ Campo: clientes.bairro (agrupamento por região)
+    ✓ Campo: clientes.cidade (agrupamento por cidade)
+    ✓ Índices de performance
+    ✓ Triggers automáticos
+    ✓ Row Level Security (RLS)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 PRÓXIMOS PASSOS:
+
+    1. Cadastrar motoristas em /motoristas
+    2. Criar rotas em /logistica
+    3. Usar sugestões automáticas de rotas
+    4. Gerenciar entregas em tempo real
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 DICA: Quer criar motoristas de teste?
+    
+    No arquivo /database-migrations.sql, descomente a seção 6:
+    
+    /* Remova o comentário daqui
+    INSERT INTO usuarios (nome, email, telefone, tipo_usuario...)
+    e daqui */
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+❓ PROBLEMAS?
+
+    ⚠️  Erro "relation already exists"
+        → Tabelas já existem! Pode ignorar.
+    
+    ⚠️  Erro "permission denied"
+        → Use o SQL Editor do Supabase com permissões de admin.
+    
+    ⚠️  Erro "foreign key constraint"
+        → Execute o script completo desde o início.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 DOCUMENTAÇÃO COMPLETA: /SETUP-LOGISTICA.md
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║              🍄 Shroom Bros - Sistema de Gestão Premium 🍄               ║
+╚══════════════════════════════════════════════════════════════════════════╝

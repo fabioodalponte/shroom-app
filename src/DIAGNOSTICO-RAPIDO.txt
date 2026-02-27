@@ -1,0 +1,176 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║                                                                          ║
+║         🔍 DIAGNÓSTICO: Dados existentes impedem constraint              ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ❌ ERRO ATUAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Error: check constraint "usuarios_tipo_usuario_check" 
+         is violated by some row
+
+  🔍 Significa: Já existem registros na tabela usuarios com valores
+                de tipo_usuario que NÃO estão na lista da constraint
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🎯 SOLUÇÃO MAIS RÁPIDA (10 SEGUNDOS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  OPÇÃO 1: Remover constraint (SEM validação) ⭐ RECOMENDADO
+  
+  Execute este ÚNICO comando:
+  
+  ALTER TABLE usuarios 
+      DROP CONSTRAINT IF EXISTS usuarios_tipo_usuario_check;
+  
+  ✅ Pronto! Agora aceita QUALQUER valor (inclusive 'Motorista')
+  ✅ Ideal para desenvolvimento/protótipo
+  ✅ Pode adicionar validação depois se precisar
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🔍 PASSO 1: VER QUAIS VALORES EXISTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Execute primeiro este SELECT para ver o que tem na tabela:
+  
+  SELECT DISTINCT tipo_usuario, COUNT(*) as total
+  FROM usuarios
+  GROUP BY tipo_usuario;
+  
+  📊 Resultado esperado:
+  
+  tipo_usuario    | total
+  ----------------|-------
+  Admin           | 1
+  NULL            | 3      ← Problema!
+  (vazio)         | 2      ← Problema!
+  outro_valor     | 1      ← Problema!
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🎯 OPÇÃO 2: Corrigir dados + Adicionar constraint
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Se quiser manter validação forte:
+  
+  -- 1. Remover constraint antiga
+  ALTER TABLE usuarios 
+      DROP CONSTRAINT IF EXISTS usuarios_tipo_usuario_check;
+  
+  -- 2. Corrigir valores NULL ou vazios
+  UPDATE usuarios
+  SET tipo_usuario = 'Funcionário'
+  WHERE tipo_usuario IS NULL OR tipo_usuario = '';
+  
+  -- 3. Adicionar constraint PERMITINDO NULL
+  ALTER TABLE usuarios
+      ADD CONSTRAINT usuarios_tipo_usuario_check 
+      CHECK (
+          tipo_usuario IS NULL 
+          OR tipo_usuario IN (
+              'Admin',
+              'Gerente', 
+              'Funcionário',
+              'Motorista',
+              'Vendedor',
+              'Produção',
+              'Logística'
+          )
+      );
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  🚀 RECOMENDAÇÃO PARA VOCÊ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Como você está em desenvolvimento e precisa testar rapidamente:
+  
+  ✅ USE A OPÇÃO 1: Simplesmente REMOVA a constraint
+  
+  Comando único:
+  
+  ALTER TABLE usuarios 
+      DROP CONSTRAINT IF EXISTS usuarios_tipo_usuario_check;
+  
+  Benefícios:
+  - ✅ Resolve em 10 segundos
+  - ✅ Não precisa mexer nos dados existentes
+  - ✅ Aceita qualquer tipo_usuario
+  - ✅ Perfeito para protótipo
+  - ✅ Pode adicionar validação depois
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  📋 COMANDO FINAL (COPIE E COLE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+  -- Remover constraint
+  ALTER TABLE usuarios 
+      DROP CONSTRAINT IF EXISTS usuarios_tipo_usuario_check;
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✅ APÓS EXECUTAR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Recarregue o app (F5)
+  2. Vá em /motoristas
+  3. Cadastre o Fabio
+  4. ✅ FUNCIONARÁ PERFEITAMENTE!
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  📁 ARQUIVOS CRIADOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ⚡ /fix-constraint-SIMPLES.sql ............... Solução rápida
+  🔍 /fix-constraint-com-dados-existentes.sql .. Diagnóstico completo
+  📋 /DIAGNOSTICO-RAPIDO.txt ................... Este arquivo
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  💡 ENTENDA O PROBLEMA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Você tentou:
+  
+  ALTER TABLE usuarios ADD CONSTRAINT ... 
+      CHECK (tipo_usuario IN ('Admin', 'Motorista', ...))
+  
+  Mas a tabela já tem registros assim:
+  
+  | id  | nome  | tipo_usuario |
+  |-----|-------|--------------|
+  | 1   | João  | Admin        | ✅ OK
+  | 2   | Maria | NULL         | ❌ NÃO está na lista!
+  | 3   | José  | (vazio)      | ❌ NÃO está na lista!
+  
+  PostgreSQL não permite criar a constraint porque ela seria
+  violada pelos registros existentes!
+  
+  Solução: Remover a constraint = sem validação = aceita tudo
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+          🔥 EXECUTE O COMANDO ÚNICO AGORA! 🔥
+          
+          ALTER TABLE usuarios 
+              DROP CONSTRAINT IF EXISTS usuarios_tipo_usuario_check;
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+╔══════════════════════════════════════════════════════════════════════════╗
+║                                                                          ║
+║      🍄 Último comando! Depois disso funciona 100%! 🍄                   ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝

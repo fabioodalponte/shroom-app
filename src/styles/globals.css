@@ -1,0 +1,41 @@
+@import 'tailwindcss';
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Cormorant Garamond', serif;
+}
+
+/* Print styles */
+@media print {
+  @page {
+    size: A4;
+    margin: 1.5cm;
+  }
+  
+  .print\\:hidden {
+    display: none !important;
+  }
+  
+  .complete-guide {
+    background: white !important;
+  }
+  
+  .complete-guide section {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  
+  header, footer, nav, .fixed {
+    display: none !important;
+  }
+  
+  body {
+    background: white !important;
+  }
+}
