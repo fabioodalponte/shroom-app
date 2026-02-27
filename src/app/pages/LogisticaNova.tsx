@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MapPin, Truck, Package, Clock, CheckCircle, Plus, Calendar, AlertCircle, Play, XCircle, Users } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
@@ -43,12 +43,12 @@ export function Logistica() {
     fetchRotas();
     fetchMotoristas();
     fetchPedidos();
-  }, []);
+  }, [fetchRotas, fetchMotoristas, fetchPedidos]);
 
-  const rotas = rotasData?.rotas || [];
-  const motoristas = motoristasData?.motoristas || [];
-  const sugestoes = sugestoesData?.sugestoes || [];
-  const pedidos = pedidosData?.pedidos || [];
+  const rotas = useMemo(() => rotasData?.rotas ?? [], [rotasData]);
+  const motoristas = useMemo(() => motoristasData?.motoristas ?? [], [motoristasData]);
+  const sugestoes = useMemo(() => sugestoesData?.sugestoes ?? [], [sugestoesData]);
+  const pedidos = useMemo(() => pedidosData?.pedidos ?? [], [pedidosData]);
 
   // Debug: Log motoristas carregados
   useEffect(() => {

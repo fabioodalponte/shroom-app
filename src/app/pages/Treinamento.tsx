@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   BookOpen, 
   Video, 
@@ -46,7 +46,7 @@ export function Treinamento() {
   const [loading, setLoading] = useState(true);
 
   // Processos padrão do fluxo de produção
-  const processosIniciais: Processo[] = [
+  const processosIniciais = useMemo<Processo[]>(() => [
     {
       id: '1',
       titulo: 'Limpeza e Preparação do Ambiente',
@@ -263,13 +263,9 @@ export function Treinamento() {
         }
       ]
     }
-  ];
+  ], []);
 
-  useEffect(() => {
-    carregarProcessos();
-  }, []);
-
-  const carregarProcessos = async () => {
+  const carregarProcessos = useCallback(async () => {
     try {
       setLoading(true);
       const result = await fetchServer('/treinamentos');
@@ -287,7 +283,11 @@ export function Treinamento() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [processosIniciais]);
+
+  useEffect(() => {
+    void carregarProcessos();
+  }, [carregarProcessos]);
 
   const salvarProgresso = async (processosAtualizados: Processo[]) => {
     try {

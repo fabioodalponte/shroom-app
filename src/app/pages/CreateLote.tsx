@@ -29,7 +29,7 @@ export function CreateLote() {
 
   useEffect(() => {
     fetchProdutos();
-  }, []);
+  }, [fetchProdutos]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

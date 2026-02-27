@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { supabase, fetchServer } from '../utils/supabase/client';
 import { Session, User } from '@supabase/supabase-js';
 
@@ -28,19 +28,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // Verificar sessão inicial
-    void checkSession();
+  const loadUserData = useCallback(async (sessionUser: User, accessToken?: string) => {
+    try {
+      const { user: userData } = await fetchServer('/me', {}, accessToken);
+      setUsuario(userData);
+    } catch (error) {
+      console.error('Erro ao carregar dados do usuário:', error);
 
-    // Escutar mudanças de autenticação
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      void handleAuthStateChange(session);
-    });
+      const tipoUsuario = (sessionUser.user_metadata?.tipo_usuario || 'cliente').toLowerCase();
+      const allowed = ['admin', 'producao', 'motorista', 'vendas', 'cliente'];
+      const safeTipo = allowed.includes(tipoUsuario) ? tipoUsuario : 'cliente';
 
-    return () => subscription.unsubscribe();
+      setUsuario({
+        id: sessionUser.id,
+        nome: sessionUser.user_metadata?.nome || sessionUser.email?.split('@')[0] || 'Usuário',
+        email: sessionUser.email || '',
+        tipo_usuario: safeTipo as Usuario['tipo_usuario'],
+        ativo: true,
+      });
+    }
   }, []);
 
-  async function handleAuthStateChange(session: Session | null) {
+  const handleAuthStateChange = useCallback(async (session: Session | null) => {
     setUser(session?.user ?? null);
     setLoading(true);
 
@@ -53,9 +62,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [loadUserData]);
 
-  async function checkSession() {
+  const checkSession = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       setUser(session?.user ?? null);
@@ -68,32 +77,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }
+  }, [loadUserData]);
 
-  async function loadUserData(sessionUser?: User, accessToken?: string) {
-    try {
-      const { user: userData } = await fetchServer('/me', {}, accessToken);
-      setUsuario(userData);
-    } catch (error) {
-      console.error('Erro ao carregar dados do usuário:', error);
-      const fallbackUser = sessionUser || user;
-      if (fallbackUser) {
-        const tipoUsuario = (fallbackUser.user_metadata?.tipo_usuario || 'cliente').toLowerCase();
-        const allowed = ['admin', 'producao', 'motorista', 'vendas', 'cliente'];
-        const safeTipo = allowed.includes(tipoUsuario) ? tipoUsuario : 'cliente';
+  useEffect(() => {
+    // Verificar sessão inicial
+    void checkSession();
 
-        setUsuario({
-          id: fallbackUser.id,
-          nome: fallbackUser.user_metadata?.nome || fallbackUser.email?.split('@')[0] || 'Usuário',
-          email: fallbackUser.email || '',
-          tipo_usuario: safeTipo as Usuario['tipo_usuario'],
-          ativo: true,
-        });
-      }
-    }
-  }
+    // Escutar mudanças de autenticação
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      void handleAuthStateChange(session);
+    });
 
-  async function signOut() {
+    return () => subscription.unsubscribe();
+  }, [checkSession, handleAuthStateChange]);
+
+  const signOut = useCallback(async () => {
     try {
       await supabase.auth.signOut();
       setUser(null);
@@ -102,11 +100,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Erro ao fazer logout:', error);
       throw error;
     }
-  }
+  }, []);
 
-  async function refreshUser() {
-    await loadUserData();
-  }
+  const refreshUser = useCallback(async () => {
+    if (user) {
+      await loadUserData(user);
+    }
+  }, [loadUserData, user]);
 
   return (
     <AuthContext.Provider value={{ user, usuario, loading, signOut, refreshUser }}>

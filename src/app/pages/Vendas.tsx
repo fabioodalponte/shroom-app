@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Search, Loader2, Users } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -32,7 +32,7 @@ export function Vendas() {
     fetchPedidos();
     fetchClientes();
     fetchProdutos();
-  }, []);
+  }, [fetchPedidos, fetchClientes, fetchProdutos]);
 
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -141,9 +141,9 @@ export function Vendas() {
     return colors[status as keyof typeof colors] || 'bg-gray-100 text-gray-700';
   };
 
-  const pedidos = pedidosData?.pedidos || [];
-  const clientes = clientesData?.clientes || [];
-  const produtos = produtosData?.produtos || [];
+  const pedidos = useMemo(() => pedidosData?.pedidos ?? [], [pedidosData]);
+  const clientes = useMemo(() => clientesData?.clientes ?? [], [clientesData]);
+  const produtos = useMemo(() => produtosData?.produtos ?? [], [produtosData]);
 
   // Debug: verificar se produtos estão carregando
   useEffect(() => {

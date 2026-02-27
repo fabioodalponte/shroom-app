@@ -18,7 +18,7 @@ export function Estoque() {
   useEffect(() => {
     fetchEstoque();
     fetchProdutos();
-  }, []);
+  }, [fetchEstoque, fetchProdutos]);
 
   const estoque = estoqueData?.estoque || [];
 

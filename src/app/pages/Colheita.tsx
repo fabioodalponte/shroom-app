@@ -31,7 +31,7 @@ export function Colheita() {
     fetchColheitas();
     fetchLotes();
     fetchProdutos();
-  }, []);
+  }, [fetchColheitas, fetchLotes, fetchProdutos]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

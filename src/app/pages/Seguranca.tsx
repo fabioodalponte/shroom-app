@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -48,12 +48,28 @@ export function Seguranca() {
   const [periodoHistorico, setPeriodoHistorico] = useState<'24h' | '7d'>('24h');
   const [loading, setLoading] = useState(true);
 
-  // Dados simulados para demonstração (substitua pela API real)
-  useEffect(() => {
-    carregarDados();
-  }, []);
+  // Função auxiliar para gerar histórico simulado
+  const gerarHistorico = useCallback((tempBase: number, umidBase: number, co2Base: number): SensorData[] => {
+    const dados: SensorData[] = [];
+    const pontos = periodoHistorico === '24h' ? 24 : 168; // 24 horas ou 7 dias
+    
+    for (let i = pontos; i >= 0; i--) {
+      dados.push({
+        timestamp: new Date(Date.now() - i * 3600000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        temperatura: tempBase + (Math.random() - 0.5) * 2,
+        umidade: umidBase + (Math.random() - 0.5) * 5,
+        co2: co2Base + (Math.random() - 0.5) * 200,
+        pm25: 10 + Math.random() * 20,
+        pm10: 15 + Math.random() * 30
+      });
+    }
+    
+    return dados;
+  }, [periodoHistorico]);
 
-  const carregarDados = () => {
+  const carregarDados = useCallback(() => {
+    setLoading(true);
+
     // Simular dados de sensores (em produção, vir da API)
     const lotesSimulados: LoteMonitoramento[] = [
       {
@@ -108,26 +124,12 @@ export function Seguranca() {
     
     setLotes(lotesSimulados);
     setLoading(false);
-  };
+  }, [gerarHistorico]);
 
-  // Função auxiliar para gerar histórico simulado
-  const gerarHistorico = (tempBase: number, umidBase: number, co2Base: number): SensorData[] => {
-    const dados: SensorData[] = [];
-    const pontos = periodoHistorico === '24h' ? 24 : 168; // 24 horas ou 7 dias
-    
-    for (let i = pontos; i >= 0; i--) {
-      dados.push({
-        timestamp: new Date(Date.now() - i * 3600000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-        temperatura: tempBase + (Math.random() - 0.5) * 2,
-        umidade: umidBase + (Math.random() - 0.5) * 5,
-        co2: co2Base + (Math.random() - 0.5) * 200,
-        pm25: 10 + Math.random() * 20,
-        pm10: 15 + Math.random() * 30
-      });
-    }
-    
-    return dados;
-  };
+  // Dados simulados para demonstração (substitua pela API real)
+  useEffect(() => {
+    carregarDados();
+  }, [carregarDados]);
 
   const getRiscoColor = (score: number) => {
     if (score < 30) return { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-500', label: 'Seguro' };

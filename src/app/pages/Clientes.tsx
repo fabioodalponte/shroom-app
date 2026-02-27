@@ -36,7 +36,7 @@ export function Clientes() {
 
   useEffect(() => {
     fetchClientes();
-  }, []);
+  }, [fetchClientes]);
 
   const handleCreateCliente = async (e: React.FormEvent) => {
     e.preventDefault();

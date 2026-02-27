@@ -80,7 +80,7 @@ export function useApi<T = any>(endpoint: string, options: UseApiOptions = {}) {
  * Hook para operações de GET
  */
 export function useGet<T = any>(endpoint: string, options?: UseApiOptions) {
-  const api = useApi<T>(endpoint, options);
+  const { execute, ...api } = useApi<T>(endpoint, options);
 
   const fetch = useCallback(async (queryParams?: Record<string, string>) => {
     const params = queryParams
@@ -88,8 +88,8 @@ export function useGet<T = any>(endpoint: string, options?: UseApiOptions) {
       : '';
     
     const requestEndpoint = `${endpoint}${params}`;
-    return api.execute(undefined, requestEndpoint);
-  }, [api, endpoint]);
+    return execute(undefined, requestEndpoint);
+  }, [execute, endpoint]);
 
   return { ...api, fetch };
 }
@@ -98,14 +98,14 @@ export function useGet<T = any>(endpoint: string, options?: UseApiOptions) {
  * Hook para operações de POST
  */
 export function usePost<T = any>(endpoint: string, options?: UseApiOptions) {
-  const api = useApi<T>(endpoint, options);
+  const { execute, ...api } = useApi<T>(endpoint, options);
 
   const post = useCallback(async (body: any) => {
-    return api.execute({
+    return execute({
       method: 'POST',
       body: JSON.stringify(body),
     });
-  }, [api]);
+  }, [execute]);
 
   return { ...api, post };
 }
@@ -114,14 +114,14 @@ export function usePost<T = any>(endpoint: string, options?: UseApiOptions) {
  * Hook para operações de PUT
  */
 export function usePut<T = any>(endpoint: string, options?: UseApiOptions) {
-  const api = useApi<T>(endpoint, options);
+  const { execute, ...api } = useApi<T>(endpoint, options);
 
   const put = useCallback(async (body: any) => {
-    return api.execute({
+    return execute({
       method: 'PUT',
       body: JSON.stringify(body),
     });
-  }, [api]);
+  }, [execute]);
 
   return { ...api, put };
 }
@@ -130,13 +130,13 @@ export function usePut<T = any>(endpoint: string, options?: UseApiOptions) {
  * Hook para operações de DELETE
  */
 export function useDelete<T = any>(endpoint: string, options?: UseApiOptions) {
-  const api = useApi<T>(endpoint, options);
+  const { execute, ...api } = useApi<T>(endpoint, options);
 
   const del = useCallback(async () => {
-    return api.execute({
+    return execute({
       method: 'DELETE',
     });
-  }, [api]);
+  }, [execute]);
 
   return { ...api, delete: del };
 }
@@ -145,14 +145,14 @@ export function useDelete<T = any>(endpoint: string, options?: UseApiOptions) {
  * Hook para operações de PATCH
  */
 export function usePatch<T = any>(endpoint: string, options?: UseApiOptions) {
-  const api = useApi<T>(endpoint, options);
+  const { execute, ...api } = useApi<T>(endpoint, options);
 
   const patch = useCallback(async (body: any) => {
-    return api.execute({
+    return execute({
       method: 'PATCH',
       body: JSON.stringify(body),
     });
-  }, [api]);
+  }, [execute]);
 
   return { ...api, patch };
 }
