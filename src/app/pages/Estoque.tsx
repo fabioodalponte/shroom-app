@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Package, Search, Filter, Loader2, AlertTriangle } from 'lucide-react';
+import { Search, Filter, Loader2, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Badge } from '../../components/ui/badge';
 import { useEstoque, useProdutos } from '../../hooks/useApi';
 import { format, differenceInDays } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
 
 export function Estoque() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -14,7 +13,7 @@ export function Estoque() {
   const [qualidadeFilter, setQualidadeFilter] = useState('all');
 
   const { data: estoqueData, loading: estoqueLoading, fetch: fetchEstoque } = useEstoque();
-  const { data: produtosData, loading: produtosLoading, fetch: fetchProdutos } = useProdutos();
+  const { loading: produtosLoading, fetch: fetchProdutos } = useProdutos();
 
   useEffect(() => {
     fetchEstoque();
@@ -22,7 +21,6 @@ export function Estoque() {
   }, []);
 
   const estoque = estoqueData?.estoque || [];
-  const produtos = produtosData?.produtos || [];
 
   // Filtrar estoque
   const filteredEstoque = estoque.filter(item => {

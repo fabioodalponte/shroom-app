@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { MapPin, Truck, Package, Clock, CheckCircle, Plus, Calendar, AlertCircle, Play, XCircle, Users, Settings } from 'lucide-react';
+import { MapPin, Truck, Package, Clock, CheckCircle, Plus, Calendar, AlertCircle, Play, XCircle, Users } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -33,10 +33,10 @@ export function Logistica() {
     observacoes: '',
   });
 
-  const { data: rotasData, loading: rotasLoading, fetch: fetchRotas } = useRotas();
+  const { data: rotasData, fetch: fetchRotas } = useRotas();
   const { data: motoristasData, loading: motoristasLoading, fetch: fetchMotoristas } = useMotoristas();
   const { data: sugestoesData, loading: sugestoesLoading, fetch: fetchSugestoes } = useSugestoesRotas();
-  const { data: pedidosData, loading: pedidosLoading, fetch: fetchPedidos } = usePedidos();
+  const { data: pedidosData, fetch: fetchPedidos } = usePedidos();
   const { post: createRota, loading: creating } = useCreateRota();
 
   useEffect(() => {

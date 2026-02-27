@@ -4,7 +4,6 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { 
-  Camera, 
   Shield, 
   Activity, 
   AlertTriangle, 
@@ -18,7 +17,6 @@ import {
   Eye
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
-import { fetchServer } from '../../utils/supabase/client';
 
 interface SensorData {
   timestamp: string;

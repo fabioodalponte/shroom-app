@@ -1,11 +1,8 @@
 import { DollarSign, TrendingUp, TrendingDown, Package, AlertCircle, CheckCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
-import { useState } from 'react';
 
 export function Financeiro() {
-  const [selectedMonth, setSelectedMonth] = useState('Dez');
-
   const revenueData = [
     { month: 'Jul', revenue: 12500 },
     { month: 'Ago', revenue: 14200 },

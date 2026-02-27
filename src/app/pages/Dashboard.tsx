@@ -3,7 +3,7 @@ import { TrendingUp, Package, AlertTriangle, ShoppingCart, DollarSign, Loader2 }
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { fetchServer } from '../../utils/supabase/client';
 import { useAuth } from '../../contexts/AuthContext';
-import { format, isToday, startOfWeek, endOfWeek, startOfMonth } from 'date-fns';
+import { format, isToday, startOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 export function Dashboard() {

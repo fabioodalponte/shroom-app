@@ -244,7 +244,6 @@ export function Compras() {
   );
 
   // Estatísticas
-  const totalCompras = compras.reduce((sum, c) => sum + parseFloat(c.valor_total || '0'), 0);
   const comprasPendentes = compras.filter(c => c.status_pagamento === 'Pendente' || c.status_pagamento === 'Atrasado').length;
   const totalPendente = compras
     .filter(c => c.status_pagamento === 'Pendente' || c.status_pagamento === 'Atrasado')

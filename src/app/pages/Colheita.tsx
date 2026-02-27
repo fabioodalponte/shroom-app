@@ -24,7 +24,7 @@ export function Colheita() {
 
   const { data: colheitasData, loading: colheitasLoading, fetch: fetchColheitas } = useColheitas();
   const { data: lotesData, loading: lotesLoading, fetch: fetchLotes } = useLotes();
-  const { data: produtosData, loading: produtosLoading, fetch: fetchProdutos } = useProdutos();
+  const { loading: produtosLoading, fetch: fetchProdutos } = useProdutos();
   const { post: createColheita, loading: creating } = useCreateColheita();
 
   useEffect(() => {
@@ -65,8 +65,6 @@ export function Colheita() {
 
   const colheitas = colheitasData?.colheitas || [];
   const lotes = lotesData?.lotes || [];
-  const produtos = produtosData?.produtos || [];
-
   // Filtrar apenas lotes prontos para colheita
   const lotesDisponiveis = lotes.filter(l => l.status === 'Pronto' || l.status === 'Em Cultivo');
 

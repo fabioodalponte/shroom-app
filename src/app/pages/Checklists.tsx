@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Printer, ClipboardList, Shield, Droplets, AlertTriangle, Check } from 'lucide-react';
+import { Printer, ClipboardList, Shield } from 'lucide-react';
 
 export function Checklists() {
   const [checklistSelecionado, setChecklistSelecionado] = useState<string | null>(null);

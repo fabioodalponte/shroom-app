@@ -16,7 +16,7 @@ export function Perfil() {
       await signOut();
       toast.success('Logout realizado com sucesso!');
       navigate('/login');
-    } catch (error) {
+    } catch {
       toast.error('Erro ao fazer logout');
     }
   };

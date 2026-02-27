@@ -3,7 +3,7 @@ import { Section } from '../components/Section';
 import { MushroomIcon } from '../components/MushroomIcon';
 import { ColorCard } from '../components/ColorCard';
 import { Download, Printer } from 'lucide-react';
-import { Sparkles, Target, Eye, Heart, Leaf, Shield, Users, Cpu, Check, X, Droplet, Sun, Package, QrCode, Instagram, MessageCircle, Facebook, Mail, Phone, MapPin, Globe } from 'lucide-react';
+import { Sparkles, Target, Eye, Heart, Leaf, Shield, Users, Cpu, Check, X, Droplet, Sun, Package, Instagram, MessageCircle, Facebook, Mail, Phone } from 'lucide-react';
 import brandBoard from 'figma:asset/0e43cee4198b31bb6344720bcec45edb39ce5c6e.png';
 import gourmetPackaging from 'figma:asset/1d9dce24d6d305d665bafffa5ef98e3b827978d0.png';
 import labelMockup from 'figma:asset/c0a614de4c0c26425ad87a6d6ccf9e0bebb46379.png';
