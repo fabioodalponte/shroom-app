@@ -21,10 +21,41 @@ export function Perfil() {
     }
   };
 
-  if (loading || !usuario) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
         <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+      </div>
+    );
+  }
+
+  if (!usuario) {
+    return (
+      <div className="p-6">
+        <Card className="max-w-xl mx-auto">
+          <CardHeader>
+            <CardTitle>Não foi possível carregar o perfil</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Verifique a conexão com o servidor e tente novamente.
+            </p>
+            <div className="flex gap-3">
+              <Button onClick={() => window.location.reload()}>
+                Tentar Novamente
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  await signOut();
+                  navigate('/login');
+                }}
+              >
+                Sair
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }

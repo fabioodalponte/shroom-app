@@ -23,12 +23,13 @@ export function useApi<T = any>(endpoint: string, options: UseApiOptions = {}) {
     successMessage,
   } = options;
 
-  const execute = useCallback(async (fetchOptions?: RequestInit) => {
+  const execute = useCallback(async (fetchOptions?: RequestInit, endpointOverride?: string) => {
     setLoading(true);
     setError(null);
 
     try {
-      const result = await fetchServer(endpoint, fetchOptions);
+      const requestEndpoint = endpointOverride || endpoint;
+      const result = await fetchServer(requestEndpoint, fetchOptions);
       setData(result);
 
       if (showSuccessToast && successMessage) {
@@ -86,8 +87,9 @@ export function useGet<T = any>(endpoint: string, options?: UseApiOptions) {
       ? '?' + new URLSearchParams(queryParams).toString()
       : '';
     
-    return api.execute();
-  }, [api]);
+    const requestEndpoint = `${endpoint}${params}`;
+    return api.execute(undefined, requestEndpoint);
+  }, [api, endpoint]);
 
   return { ...api, fetch };
 }

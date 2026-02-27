@@ -1,18 +1,44 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { supabase } from '../../utils/supabase/client';
+import { fetchServer, supabase } from '../../utils/supabase/client';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Flower2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { Alert, AlertDescription } from '../ui/alert';
+import { useAuth } from '../../contexts/AuthContext';
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [allowPublicSignup, setAllowPublicSignup] = useState(false);
+  const [signupStatusLoading, setSignupStatusLoading] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+  useEffect(() => {
+    if (!authLoading && user) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [authLoading, user, navigate]);
+
+  useEffect(() => {
+    void loadSetupStatus();
+  }, []);
+
+  async function loadSetupStatus() {
+    try {
+      const data = await fetchServer('/setup/status');
+      setAllowPublicSignup(!!data.allow_public_signup);
+    } catch (error) {
+      console.error('Erro ao carregar status do setup:', error);
+      setAllowPublicSignup(false);
+    } finally {
+      setSignupStatusLoading(false);
+    }
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +54,7 @@ export function LoginPage() {
 
       if (data.session) {
         toast.success('Login realizado com sucesso!');
-        navigate('/dashboard');
+        navigate('/dashboard', { replace: true });
       }
 
     } catch (error: any) {
@@ -46,7 +72,9 @@ export function LoginPage() {
       }
       
       toast.error(errorMessage, {
-        description: 'Se você ainda não tem uma conta, clique em "Cadastre-se"'
+        description: allowPublicSignup
+          ? 'Se você ainda não tem uma conta, clique em "Cadastre-se"'
+          : 'Se você ainda não tem acesso, solicite criação de usuário ao administrador.'
       });
     } finally {
       setLoading(false);
@@ -72,8 +100,17 @@ export function LoginPage() {
           {/* Alerta Informativo */}
           <Alert className="mb-6 border-blue-200 bg-blue-50">
             <AlertDescription className="text-sm text-blue-800">
-              <strong>Primeira vez?</strong> Você precisa criar uma conta primeiro.
-              Clique em "Cadastre-se" abaixo.
+              {allowPublicSignup ? (
+                <>
+                  <strong>Primeira vez?</strong> Você precisa criar uma conta primeiro.
+                  Clique em "Cadastre-se" abaixo.
+                </>
+              ) : (
+                <>
+                  Cadastro público desativado.
+                  Solicite ao administrador a criação do seu usuário.
+                </>
+              )}
             </AlertDescription>
           </Alert>
 
@@ -122,15 +159,17 @@ export function LoginPage() {
             </Button>
           </form>
 
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => navigate('/signup')}
-              className="text-emerald-600 hover:text-emerald-700 font-medium"
-              disabled={loading}
-            >
-              Não tem conta? Cadastre-se
-            </button>
-          </div>
+          {!signupStatusLoading && allowPublicSignup && (
+            <div className="mt-6 text-center">
+              <button
+                onClick={() => navigate('/signup')}
+                className="text-emerald-600 hover:text-emerald-700 font-medium"
+                disabled={loading}
+              >
+                Não tem conta? Cadastre-se
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

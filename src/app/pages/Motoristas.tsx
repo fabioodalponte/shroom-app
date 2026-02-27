@@ -309,7 +309,7 @@ export function Motoristas() {
 
       {/* Lista de Motoristas */}
       <div>
-        <h2 className="font-['Cormorant_Garamond']" style={{ fontSize: '28px', fontWeight: 600 }} className="mb-4">
+        <h2 className="font-['Cormorant_Garamond'] mb-4" style={{ fontSize: '28px', fontWeight: 600 }}>
           Equipe de Motoristas
         </h2>
 

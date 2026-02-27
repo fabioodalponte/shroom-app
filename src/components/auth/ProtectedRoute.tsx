@@ -1,39 +1,13 @@
-import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router';
-import { supabase } from '../../utils/supabase/client';
 import { Loader2 } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const [loading, setLoading] = useState(true);
-  const [authenticated, setAuthenticated] = useState(false);
-
-  useEffect(() => {
-    checkAuth();
-
-    // Escutar mudanças de autenticação
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAuthenticated(!!session);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  async function checkAuth() {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      setAuthenticated(!!session);
-    } catch (error) {
-      console.error('Erro ao verificar autenticação:', error);
-      setAuthenticated(false);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { user, loading } = useAuth();
 
   if (loading) {
     return (
@@ -43,7 +17,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
     );
   }
 
-  if (!authenticated) {
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
 

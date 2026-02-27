@@ -454,7 +454,7 @@ export async function getMotoristas() {
   const { data, error } = await supabase
     .from('usuarios')
     .select('id, nome, email, telefone')
-    .eq('tipo_usuario', 'Motorista')
+    .eq('tipo_usuario', 'motorista')
     .eq('ativo', true)
     .order('nome');
   
@@ -488,7 +488,7 @@ export async function createMotorista(motoristaData: {
     .insert({
       id: motoristaId,
       ...motoristaData,
-      tipo_usuario: 'Motorista',
+      tipo_usuario: 'motorista',
       ativo: true,
     })
     .select()

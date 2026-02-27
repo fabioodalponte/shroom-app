@@ -19,10 +19,13 @@ import {
   ClipboardList
 } from 'lucide-react';
 import { MushroomIcon } from '../../components/MushroomIcon';
+import { useAuth } from '../../contexts/AuthContext';
+import { toast } from 'sonner@2.0.3';
 
 export function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
+  const { usuario, signOut } = useAuth();
 
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -39,9 +42,24 @@ export function AppLayout() {
     { to: '/financeiro', icon: DollarSign, label: 'Financeiro' },
   ];
 
-  const handleLogout = () => {
-    navigate('/login');
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      toast.success('Logout realizado com sucesso!');
+      navigate('/login');
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      toast.error('Erro ao fazer logout');
+    }
   };
+
+  const tipoUsuarioLabel = {
+    admin: 'Administrador',
+    producao: 'Produção',
+    motorista: 'Motorista',
+    vendas: 'Vendas',
+    cliente: 'Cliente'
+  } as const;
 
   return (
     <div className="min-h-screen bg-[#F8F6F2]">
@@ -123,12 +141,16 @@ export function AppLayout() {
           >
             <User size={20} />
             <div className="flex-1">
-              <p className="text-sm">Fabio Silva</p>
-              <p className="text-xs text-[#A88F52]">Administrador</p>
+              <p className="text-sm">{usuario?.nome || 'Usuário'}</p>
+              <p className="text-xs text-[#A88F52]">
+                {usuario?.tipo_usuario ? tipoUsuarioLabel[usuario.tipo_usuario] : 'Sem perfil'}
+              </p>
             </div>
           </NavLink>
           <button
-            onClick={handleLogout}
+            onClick={() => {
+              void handleLogout();
+            }}
             className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-red-900/20 text-red-400 transition-colors w-full"
           >
             <LogOut size={20} />

@@ -6,6 +6,7 @@ import * as db from "./db.tsx";
 import * as comprasKV from "./compras-kv.tsx";
 
 const app = new Hono();
+const isAdminUser = (user: any) => String(user?.tipo_usuario || '').toLowerCase() === 'admin';
 
 // Enable logger
 app.use('*', logger(console.log));
@@ -29,6 +30,25 @@ app.get("/make-server-5522cecf/health", (c) => {
   return c.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+/**
+ * GET /setup/status - Estado inicial do sistema
+ */
+app.get("/make-server-5522cecf/setup/status", async (c) => {
+  try {
+    const usersCount = await auth.getUsersCount();
+    const setupComplete = usersCount > 0;
+    return c.json({
+      setup_complete: setupComplete,
+      users_count: usersCount,
+      allow_public_signup: !setupComplete,
+      first_user_must_be_admin: !setupComplete,
+    });
+  } catch (error) {
+    console.error('Erro ao verificar setup:', error);
+    return c.json({ error: error.message || 'Erro ao verificar setup' }, 500);
+  }
+});
+
 // ============================================
 // AUTENTICAÇÃO
 // ============================================
@@ -40,9 +60,34 @@ app.post("/make-server-5522cecf/signup", async (c) => {
   try {
     const body = await c.req.json();
     const { email, password, nome, telefone, tipo_usuario } = body;
+    const normalizedTipoUsuario = String(tipo_usuario || '').trim().toLowerCase();
 
-    if (!email || !password || !nome || !tipo_usuario) {
-      return c.json({ error: 'Campos obrigatórios: email, password, nome, tipo_usuario' }, 400);
+    if (!email || !password || !nome) {
+      return c.json({ error: 'Campos obrigatórios: email, password, nome' }, 400);
+    }
+
+    if (typeof tipo_usuario !== 'string' || !tipo_usuario.trim()) {
+      return c.json({ error: 'tipo_usuario é obrigatório' }, 400);
+    }
+
+    const usersCount = await auth.getUsersCount();
+    const isBootstrapMode = usersCount === 0;
+
+    if (isBootstrapMode && normalizedTipoUsuario !== 'admin') {
+      return c.json({ error: 'No primeiro acesso, o cadastro deve ser de um administrador' }, 400);
+    }
+
+    if (!isBootstrapMode) {
+      const accessToken = c.req.header('Authorization')?.split(' ')[1];
+      const { authenticated, user } = await auth.verifyAuth(accessToken ?? null);
+
+      if (!authenticated || !user) {
+        return c.json({ error: 'Cadastro público desativado. Faça login como administrador.' }, 401);
+      }
+
+      if (!isAdminUser(user)) {
+        return c.json({ error: 'Apenas administradores podem criar novos usuários.' }, 403);
+      }
     }
 
     const result = await auth.signUp({
@@ -50,7 +95,7 @@ app.post("/make-server-5522cecf/signup", async (c) => {
       password,
       nome,
       telefone,
-      tipo_usuario
+      tipo_usuario: normalizedTipoUsuario,
     });
 
     if (!result.success) {
@@ -451,7 +496,11 @@ app.get("/make-server-5522cecf/cameras", async (c) => {
 app.get("/make-server-5522cecf/usuarios", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
-    await auth.requireAuth(accessToken ?? null);
+    const actor = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(actor)) {
+      return c.json({ error: 'Apenas administradores podem listar usuários.' }, 403);
+    }
 
     const tipo = c.req.query('tipo');
     const usuarios = await db.getUsuarios(tipo);
@@ -460,6 +509,43 @@ app.get("/make-server-5522cecf/usuarios", async (c) => {
   } catch (error) {
     console.error('Erro ao buscar usuários:', error);
     return c.json({ error: error.message }, 500);
+  }
+});
+
+app.post("/make-server-5522cecf/usuarios", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const actor = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(actor)) {
+      return c.json({ error: 'Apenas administradores podem criar usuários.' }, 403);
+    }
+
+    const body = await c.req.json();
+    const { email, password, nome, telefone, tipo_usuario } = body;
+    const normalizedTipoUsuario = String(tipo_usuario || '').trim().toLowerCase();
+
+    if (!email || !password || !nome || !normalizedTipoUsuario) {
+      return c.json({ error: 'Campos obrigatórios: email, password, nome, tipo_usuario' }, 400);
+    }
+
+    const result = await auth.signUp({
+      email,
+      password,
+      nome,
+      telefone,
+      tipo_usuario: normalizedTipoUsuario,
+    });
+
+    if (!result.success) {
+      return c.json({ error: result.error }, 400);
+    }
+
+    return c.json({ success: true, user: result.user }, 201);
+
+  } catch (error) {
+    console.error('Erro ao criar usuário:', error);
+    return c.json({ error: error.message || 'Erro ao criar usuário' }, 500);
   }
 });
 

@@ -5,6 +5,28 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
 );
 
+const USER_TYPES = ['admin', 'producao', 'motorista', 'vendas', 'cliente'] as const;
+type UserType = (typeof USER_TYPES)[number];
+
+function normalizeUserType(value: string): UserType | null {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return null;
+  return USER_TYPES.includes(normalized as UserType) ? (normalized as UserType) : null;
+}
+
+export async function getUsersCount() {
+  const { count, error } = await supabase
+    .from('usuarios')
+    .select('id', { count: 'exact', head: true });
+
+  if (error) {
+    console.error('Erro ao contar usuários:', error);
+    throw new Error('Não foi possível validar estado de configuração');
+  }
+
+  return count ?? 0;
+}
+
 /**
  * Cadastro de novo usuário (Sign Up)
  */
@@ -13,9 +35,17 @@ export async function signUp(data: {
   password: string;
   nome: string;
   telefone?: string;
-  tipo_usuario: 'admin' | 'producao' | 'motorista' | 'vendas' | 'cliente';
+  tipo_usuario: string;
 }) {
   try {
+    const tipoUsuario = normalizeUserType(data.tipo_usuario);
+    if (!tipoUsuario) {
+      return {
+        success: false,
+        error: 'tipo_usuario inválido',
+      };
+    }
+
     // 1. Criar usuário no Supabase Auth
     // IMPORTANTE: email_confirm: true pois não temos servidor de email configurado
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
@@ -24,7 +54,7 @@ export async function signUp(data: {
       email_confirm: true, // Auto-confirma email (sem servidor de email)
       user_metadata: {
         nome: data.nome,
-        tipo_usuario: data.tipo_usuario,
+        tipo_usuario: tipoUsuario,
       }
     });
 
@@ -45,7 +75,7 @@ export async function signUp(data: {
         nome: data.nome,
         email: data.email,
         telefone: data.telefone,
-        tipo_usuario: data.tipo_usuario,
+        tipo_usuario: tipoUsuario,
         ativo: true,
       });
 
@@ -62,11 +92,11 @@ export async function signUp(data: {
         id: authData.user.id,
         email: authData.user.email,
         nome: data.nome,
-        tipo_usuario: data.tipo_usuario,
+        tipo_usuario: tipoUsuario,
       }
     };
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Erro no signup:', error);
     return {
       success: false,
@@ -133,9 +163,9 @@ export async function verifyAuth(accessToken: string | null) {
         .insert({
           id: user.id,
           email: user.email,
-          nome: user.user_metadata?.name || user.email?.split('@')[0] || 'Usuário',
+          nome: user.user_metadata?.nome || user.user_metadata?.name || user.email?.split('@')[0] || 'Usuário',
           telefone: user.user_metadata?.phone || null,
-          tipo_usuario: 'Admin', // Usuários autenticados via auth são Admin por padrão
+          tipo_usuario: 'admin',
           ativo: true,
         })
         .select()
@@ -169,8 +199,8 @@ export async function verifyAuth(accessToken: string | null) {
           user: { 
             id: user.id, 
             email: user.email,
-            nome: user.user_metadata?.name || user.email?.split('@')[0] || 'Usuário',
-            tipo_usuario: 'Admin'
+            nome: user.user_metadata?.nome || user.user_metadata?.name || user.email?.split('@')[0] || 'Usuário',
+            tipo_usuario: 'admin'
           } 
         };
       }

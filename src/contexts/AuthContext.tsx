@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase, fetchServer } from '../utils/supabase/client';
-import { User } from '@supabase/supabase-js';
+import { Session, User } from '@supabase/supabase-js';
 
 interface Usuario {
   id: string;
@@ -10,6 +10,7 @@ interface Usuario {
   tipo_usuario: 'admin' | 'producao' | 'motorista' | 'vendas' | 'cliente';
   avatar_url?: string;
   ativo: boolean;
+  created_at?: string;
 }
 
 interface AuthContextData {
@@ -29,21 +30,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Verificar sessão inicial
-    checkSession();
+    void checkSession();
 
     // Escutar mudanças de autenticação
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        await loadUserData();
-      } else {
-        setUsuario(null);
-      }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      void handleAuthStateChange(session);
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  async function handleAuthStateChange(session: Session | null) {
+    setUser(session?.user ?? null);
+    setLoading(true);
+
+    try {
+      if (session?.user) {
+        await loadUserData(session.user, session.access_token);
+      } else {
+        setUsuario(null);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function checkSession() {
     try {
@@ -51,7 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(session?.user ?? null);
       
       if (session?.user) {
-        await loadUserData();
+        await loadUserData(session.user, session.access_token);
       }
     } catch (error) {
       console.error('Erro ao verificar sessão:', error);
@@ -60,12 +70,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  async function loadUserData() {
+  async function loadUserData(sessionUser?: User, accessToken?: string) {
     try {
-      const { user: userData } = await fetchServer('/me');
+      const { user: userData } = await fetchServer('/me', {}, accessToken);
       setUsuario(userData);
     } catch (error) {
       console.error('Erro ao carregar dados do usuário:', error);
+      const fallbackUser = sessionUser || user;
+      if (fallbackUser) {
+        const tipoUsuario = (fallbackUser.user_metadata?.tipo_usuario || 'cliente').toLowerCase();
+        const allowed = ['admin', 'producao', 'motorista', 'vendas', 'cliente'];
+        const safeTipo = allowed.includes(tipoUsuario) ? tipoUsuario : 'cliente';
+
+        setUsuario({
+          id: fallbackUser.id,
+          nome: fallbackUser.user_metadata?.nome || fallbackUser.email?.split('@')[0] || 'Usuário',
+          email: fallbackUser.email || '',
+          tipo_usuario: safeTipo as Usuario['tipo_usuario'],
+          ativo: true,
+        });
+      }
     }
   }
 
