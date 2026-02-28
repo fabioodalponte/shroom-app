@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { 
   Shield, 
   Activity, 
@@ -14,9 +15,13 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
-  Eye
+  Eye,
+  Camera,
+  RefreshCcw
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
+import { format } from 'date-fns';
+import { fetchServer } from '../../utils/supabase/client';
 
 interface SensorData {
   timestamp: string;
@@ -42,94 +47,109 @@ interface LoteMonitoramento {
   alertas: string[];
 }
 
+interface CameraConfig {
+  id: string;
+  nome: string;
+  localizacao: string;
+  tipo?: string | null;
+  status?: string | null;
+  url_stream?: string | null;
+  resolucao?: string | null;
+  gravacao_ativa?: boolean | null;
+}
+
+function hasCameraStream(camera: CameraConfig | null | undefined) {
+  return !!camera?.url_stream && camera.url_stream.trim().length > 0;
+}
+
+function normalizeText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function buildCameraImageUrl(url: string, token: number) {
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+
+  try {
+    const parsed = new URL(trimmed);
+    parsed.searchParams.set('t', String(token));
+    return parsed.toString();
+  } catch {
+    const separator = trimmed.includes('?') ? '&' : '?';
+    return `${trimmed}${separator}t=${token}`;
+  }
+}
+
 export function Seguranca() {
   const [lotes, setLotes] = useState<LoteMonitoramento[]>([]);
+  const [cameras, setCameras] = useState<CameraConfig[]>([]);
   const [loteSelecionado, setLoteSelecionado] = useState<string>('todos');
   const [periodoHistorico, setPeriodoHistorico] = useState<'24h' | '7d'>('24h');
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
+  const [cameraSelecionada, setCameraSelecionada] = useState<CameraConfig | null>(null);
+  const [cameraFrameToken, setCameraFrameToken] = useState(Date.now());
+  const [cameraErroCarregamento, setCameraErroCarregamento] = useState<string | null>(null);
+  const [autoAtualizarCamera, setAutoAtualizarCamera] = useState(false);
 
-  // Função auxiliar para gerar histórico simulado
-  const gerarHistorico = useCallback((tempBase: number, umidBase: number, co2Base: number): SensorData[] => {
-    const dados: SensorData[] = [];
-    const pontos = periodoHistorico === '24h' ? 24 : 168; // 24 horas ou 7 dias
-    
-    for (let i = pontos; i >= 0; i--) {
-      dados.push({
-        timestamp: new Date(Date.now() - i * 3600000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-        temperatura: tempBase + (Math.random() - 0.5) * 2,
-        umidade: umidBase + (Math.random() - 0.5) * 5,
-        co2: co2Base + (Math.random() - 0.5) * 200,
-        pm25: 10 + Math.random() * 20,
-        pm10: 15 + Math.random() * 30
-      });
+  const carregarDados = useCallback(async () => {
+    setLoading(true);
+    setErrorMessage(null);
+
+    try {
+      const hours = periodoHistorico === '24h' ? 24 : 168;
+      const [sensoresResult, camerasResult] = await Promise.allSettled([
+        fetchServer(`/sensores/latest?hours=${hours}`),
+        fetchServer('/cameras'),
+      ]);
+
+      if (sensoresResult.status === 'rejected') {
+        throw sensoresResult.reason;
+      }
+
+      const sensores = (sensoresResult.value.sensores || []) as LoteMonitoramento[];
+      setLotes(sensores);
+
+      if (camerasResult.status === 'fulfilled') {
+        setCameras((camerasResult.value.cameras || []) as CameraConfig[]);
+      } else {
+        console.warn('Não foi possível carregar câmeras:', camerasResult.reason);
+        setCameras([]);
+      }
+    } catch (error: any) {
+      console.error('Erro ao carregar monitoramento de sensores:', error);
+      setErrorMessage(error.message || 'Erro ao carregar sensores');
+      setLotes([]);
+      setCameras([]);
+    } finally {
+      setLoading(false);
     }
-    
-    return dados;
   }, [periodoHistorico]);
 
-  const carregarDados = useCallback(() => {
-    setLoading(true);
-
-    // Simular dados de sensores (em produção, vir da API)
-    const lotesSimulados: LoteMonitoramento[] = [
-      {
-        id: '1',
-        codigo_lote: 'E1-P1-B1',
-        sala: 'Frutificação 01',
-        sensor_atual: {
-          temperatura: 22.5,
-          umidade: 87,
-          co2: 980,
-          pm25: 12
-        },
-        historico: gerarHistorico(22.5, 87, 980),
-        score_risco: 15,
-        alertas: []
-      },
-      {
-        id: '2',
-        codigo_lote: 'E1-P2-B2',
-        sala: 'Frutificação 02',
-        sensor_atual: {
-          temperatura: 24.8,
-          umidade: 93,
-          co2: 1450,
-          pm25: 28
-        },
-        historico: gerarHistorico(24.8, 93, 1450),
-        score_risco: 68,
-        alertas: [
-          'Umidade acima do ideal (>92%)',
-          'CO2 subindo rapidamente',
-          'Possível contaminação detectada'
-        ]
-      },
-      {
-        id: '3',
-        codigo_lote: 'E2-P1-B3',
-        sala: 'Incubação 01',
-        sensor_atual: {
-          temperatura: 23.2,
-          umidade: 85,
-          co2: 1100,
-          pm25: 15
-        },
-        historico: gerarHistorico(23.2, 85, 1100),
-        score_risco: 35,
-        alertas: [
-          'CO2 ligeiramente elevado'
-        ]
-      }
-    ];
-    
-    setLotes(lotesSimulados);
-    setLoading(false);
-  }, [gerarHistorico]);
-
-  // Dados simulados para demonstração (substitua pela API real)
   useEffect(() => {
-    carregarDados();
+    void carregarDados();
   }, [carregarDados]);
+
+  useEffect(() => {
+    if (loteSelecionado === 'todos') return;
+    if (!lotes.some((lote) => lote.id === loteSelecionado)) {
+      setLoteSelecionado('todos');
+    }
+  }, [lotes, loteSelecionado]);
+
+  useEffect(() => {
+    if (!cameraDialogOpen || !autoAtualizarCamera || !cameraSelecionada?.url_stream) return;
+
+    const timerId = window.setInterval(() => {
+      setCameraFrameToken(Date.now());
+    }, 8000);
+
+    return () => window.clearInterval(timerId);
+  }, [cameraDialogOpen, autoAtualizarCamera, cameraSelecionada?.id, cameraSelecionada?.url_stream]);
 
   const getRiscoColor = (score: number) => {
     if (score < 30) return { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-500', label: 'Seguro' };
@@ -143,6 +163,63 @@ export function Seguranca() {
     if (valor > ideal) return { icon: TrendingUp, color: 'text-red-600', label: 'Subindo' };
     return { icon: TrendingDown, color: 'text-blue-600', label: 'Caindo' };
   };
+
+  const getCameraForLote = useCallback((lote: LoteMonitoramento) => {
+    if (!cameras.length) return null;
+
+    const camerasAtivas = cameras.filter((camera) => normalizeText(String(camera.status || 'ativa')) !== 'inativa');
+    const base = camerasAtivas.length ? camerasAtivas : cameras;
+    const baseComStream = base.filter(hasCameraStream);
+    const universoBusca = baseComStream.length ? baseComStream : base;
+
+    const sala = normalizeText(lote.sala || '');
+    const codigo = normalizeText(lote.codigo_lote || '');
+
+    const encontrada = universoBusca.find((camera) => {
+      const nome = normalizeText(camera.nome || '');
+      const localizacao = normalizeText(camera.localizacao || '');
+
+      const matchSala =
+        !!sala &&
+        (nome.includes(sala) ||
+          localizacao.includes(sala) ||
+          sala.includes(nome) ||
+          sala.includes(localizacao));
+
+      const matchCodigo = !!codigo && (nome.includes(codigo) || localizacao.includes(codigo));
+
+      return matchSala || matchCodigo;
+    });
+
+    if (encontrada && hasCameraStream(encontrada)) return encontrada;
+
+    const fallbackComStream =
+      universoBusca.find(hasCameraStream) ||
+      base.find(hasCameraStream) ||
+      cameras.find(hasCameraStream) ||
+      null;
+
+    return fallbackComStream;
+  }, [cameras]);
+
+  const abrirCameraDoLote = useCallback((lote: LoteMonitoramento) => {
+    const camera = getCameraForLote(lote);
+    setCameraSelecionada(camera);
+    setCameraErroCarregamento(null);
+    setCameraFrameToken(Date.now());
+    setAutoAtualizarCamera(false);
+    setCameraDialogOpen(true);
+  }, [getCameraForLote]);
+
+  const handleCameraDialogChange = useCallback((open: boolean) => {
+    setCameraDialogOpen(open);
+
+    if (!open) {
+      setAutoAtualizarCamera(false);
+      setCameraErroCarregamento(null);
+      setCameraSelecionada(null);
+    }
+  }, []);
 
   const lotesFiltrados = loteSelecionado === 'todos' 
     ? lotes 
@@ -171,7 +248,7 @@ export function Seguranca() {
           Segurança & Monitoramento
         </h1>
         <p className="text-[#1A1A1A] opacity-70 mt-1">
-          Sensores IoT, câmeras e análise de risco de contaminação
+          Sensores IoT em tempo real, câmeras e análise de risco de contaminação
         </p>
       </div>
 
@@ -200,7 +277,27 @@ export function Seguranca() {
             <SelectItem value="7d">Últimos 7 dias</SelectItem>
           </SelectContent>
         </Select>
+
+        <Button variant="outline" onClick={() => void carregarDados()}>
+          Atualizar
+        </Button>
       </div>
+
+      {errorMessage && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="py-3 text-sm text-red-700">
+            {errorMessage}
+          </CardContent>
+        </Card>
+      )}
+
+      {lotes.length === 0 && !errorMessage && (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-gray-500">
+            Nenhuma leitura de sensor encontrada. Configure o webhook e envie as primeiras medições.
+          </CardContent>
+        </Card>
+      )}
 
       {/* Cards de Resumo - Métricas Gerais */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -275,17 +372,18 @@ export function Seguranca() {
         </Card>
       </div>
 
-      {/* Painel de Lotes com Score de Risco */}
-      {lotesFiltrados.map(lote => {
-        const risco = getRiscoColor(lote.score_risco);
-        const tendTemp = getTendencia(lote.sensor_atual.temperatura, 22, 2);
-        const tendUmid = getTendencia(lote.sensor_atual.umidade, 85, 5);
-        const tendCo2 = getTendencia(lote.sensor_atual.co2, 1000, 200);
+	      {/* Painel de Lotes com Score de Risco */}
+	      {lotesFiltrados.map(lote => {
+	        const risco = getRiscoColor(lote.score_risco);
+	        const tendTemp = getTendencia(lote.sensor_atual.temperatura, 22, 2);
+	        const tendUmid = getTendencia(lote.sensor_atual.umidade, 85, 5);
+	        const tendCo2 = getTendencia(lote.sensor_atual.co2, 1000, 200);
+          const cameraLote = getCameraForLote(lote);
 
-        return (
-          <Card key={lote.id} className={`border-l-4 ${risco.border}`}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
+	        return (
+	          <Card key={lote.id} className={`border-l-4 ${risco.border}`}>
+	            <CardHeader>
+	              <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-3">
                     <span className="text-2xl font-['Cormorant_Garamond']">{lote.codigo_lote}</span>
@@ -295,12 +393,17 @@ export function Seguranca() {
                     </Badge>
                   </CardTitle>
                 </div>
-                <Button variant="outline" size="sm">
-                  <Eye className="w-4 h-4 mr-2" />
-                  Câmera ao Vivo
-                </Button>
-              </div>
-            </CardHeader>
+	                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => abrirCameraDoLote(lote)}
+                    disabled={!cameraLote}
+                  >
+	                  <Eye className="w-4 h-4 mr-2" />
+	                  {cameraLote ? 'Câmera ao Vivo' : 'Sem Câmera'}
+	                </Button>
+	              </div>
+	            </CardHeader>
 
             <CardContent className="space-y-6">
               {/* Alertas (se houver) */}
@@ -387,14 +490,21 @@ export function Seguranca() {
                     <ResponsiveContainer width="100%" height={200}>
                       <LineChart data={lote.historico}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis 
-                          dataKey="timestamp" 
+                        <XAxis
+                          dataKey="timestamp"
                           tick={{ fontSize: 10 }}
                           interval="preserveStartEnd"
+                          tickFormatter={(value) =>
+                            format(new Date(value), periodoHistorico === '24h' ? 'HH:mm' : 'dd/MM HH:mm')
+                          }
                         />
                         <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
                         <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
-                        <Tooltip />
+                        <Tooltip
+                          labelFormatter={(value) =>
+                            format(new Date(value as string), 'dd/MM/yyyy HH:mm')
+                          }
+                        />
                         <Legend iconSize={10} wrapperStyle={{ fontSize: '12px' }} />
                         <Line 
                           yAxisId="left"
@@ -428,13 +538,20 @@ export function Seguranca() {
                     <ResponsiveContainer width="100%" height={200}>
                       <AreaChart data={lote.historico}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis 
-                          dataKey="timestamp" 
+                        <XAxis
+                          dataKey="timestamp"
                           tick={{ fontSize: 10 }}
                           interval="preserveStartEnd"
+                          tickFormatter={(value) =>
+                            format(new Date(value), periodoHistorico === '24h' ? 'HH:mm' : 'dd/MM HH:mm')
+                          }
                         />
                         <YAxis tick={{ fontSize: 10 }} />
-                        <Tooltip />
+                        <Tooltip
+                          labelFormatter={(value) =>
+                            format(new Date(value as string), 'dd/MM/yyyy HH:mm')
+                          }
+                        />
                         <Legend iconSize={10} wrapperStyle={{ fontSize: '12px' }} />
                         <Area 
                           type="monotone" 
@@ -455,21 +572,87 @@ export function Seguranca() {
         );
       })}
 
-      {/* Card de Informações dos Sensores */}
-      <Card className="bg-blue-50">
+	      {/* Card de Informações dos Sensores */}
+	      <Card className="bg-blue-50">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-blue-900">
             <Activity size={20} />
             Sensores IoT Configurados
           </CardTitle>
         </CardHeader>
-        <CardContent className="text-sm text-blue-900 space-y-2">
-          <p><strong>AHT10:</strong> Sensor de temperatura e umidade de alta precisão</p>
-          <p><strong>BME280:</strong> Sensor barométrico com leitura de temperatura, umidade e pressão</p>
-          <p><strong>MH-Z19B (Planejado):</strong> Sensor de CO₂ para detecção precoce de contaminação</p>
-          <p><strong>PMS5003 (Fase 2):</strong> Sensor de partículas PM2.5 e PM10 no ar</p>
-        </CardContent>
-      </Card>
+	        <CardContent className="text-sm text-blue-900 space-y-2">
+	          <p><strong>SHT45:</strong> Sensor de temperatura e umidade de alta precisão</p>
+	          <p><strong>SCD41:</strong> Sensor NDIR de CO₂ para monitoramento contínuo da sala</p>
+	          <p><strong>Origem dos dados:</strong> ESP32 WROOM enviando leituras para o endpoint de ingestão</p>
+	          <p><strong>Câmeras conectadas:</strong> {cameras.length} cadastrada(s) na API</p>
+	          <p><strong>Persistência:</strong> Leituras gravadas em `leituras_sensores` para histórico e análise</p>
+	        </CardContent>
+	      </Card>
+
+      <Dialog open={cameraDialogOpen} onOpenChange={handleCameraDialogChange}>
+        <DialogContent className="w-[95vw] sm:max-w-5xl max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Camera className="w-5 h-5" />
+              {cameraSelecionada?.nome || 'Câmera não encontrada'}
+            </DialogTitle>
+            <DialogDescription>
+              {cameraSelecionada
+                ? `${cameraSelecionada.localizacao} • ${cameraSelecionada.status || 'Status não informado'}`
+                : 'Cadastre uma câmera na tabela `cameras` com url_stream para visualizar as imagens.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {cameraSelecionada?.url_stream ? (
+            <div className="space-y-4">
+              <div className="flex max-h-[65dvh] min-h-[220px] w-full items-center justify-center overflow-hidden rounded-lg border bg-black">
+                {cameraErroCarregamento ? (
+                  <div className="flex h-full items-center justify-center p-6 text-center text-sm text-red-300">
+                    {cameraErroCarregamento}
+                  </div>
+                ) : (
+                  <img
+                    src={buildCameraImageUrl(cameraSelecionada.url_stream, cameraFrameToken)}
+                    alt={`Feed da ${cameraSelecionada.nome}`}
+                    className="max-h-[65dvh] w-full select-none object-contain"
+                    draggable={false}
+                    loading="eager"
+                    decoding="async"
+                    onLoad={() => setCameraErroCarregamento(null)}
+                    onError={() => setCameraErroCarregamento('Falha ao carregar a câmera. Verifique a URL (ex.: http://IP_DA_CAM/capture) e se o dispositivo está online na mesma rede.')}
+                  />
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setCameraFrameToken(Date.now())}>
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                  Atualizar frame
+                </Button>
+                <Button
+                  variant={autoAtualizarCamera ? 'default' : 'outline'}
+                  onClick={() => setAutoAtualizarCamera((prev) => !prev)}
+                >
+                  {autoAtualizarCamera ? 'Auto atualização ON (8s)' : 'Auto atualização OFF'}
+                </Button>
+                <DialogClose asChild>
+                  <Button variant="outline">Fechar</Button>
+                </DialogClose>
+              </div>
+
+              <p className="text-xs text-gray-500">
+                Para ESP32-CAM com resposta lenta, use a URL de snapshot (ex.: `http://IP_DA_CAM/capture`) no campo `url_stream`.
+              </p>
+            </div>
+          ) : (
+            <Card className="border-dashed">
+              <CardContent className="py-10 text-center text-sm text-gray-600">
+                Câmera sem URL configurada. Preencha `url_stream` na tabela `cameras` para exibir no app.
+              </CardContent>
+            </Card>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Procedimentos de Emergência */}
       <Card className="bg-red-50 border-l-4 border-l-red-500">

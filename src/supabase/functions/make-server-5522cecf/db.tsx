@@ -74,6 +74,115 @@ export async function updateLote(id: string, updates: any) {
   return data;
 }
 
+export async function getLoteByCodigo(codigoLote: string) {
+  const { data, error } = await supabase
+    .from('lotes')
+    .select('id, codigo_lote, sala')
+    .eq('codigo_lote', codigoLote)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+interface LeituraSensorInput {
+  lote_id: string;
+  temperatura?: number | null;
+  umidade?: number | null;
+  co2_ppm?: number | null;
+  luminosidade_lux?: number | null;
+  timestamp?: string | null;
+}
+
+export async function createLeituraSensor(input: LeituraSensorInput) {
+  const payload: Record<string, unknown> = {
+    lote_id: input.lote_id,
+  };
+
+  if (typeof input.temperatura === 'number') payload.temperatura = input.temperatura;
+  if (typeof input.umidade === 'number') payload.umidade = input.umidade;
+  if (typeof input.co2_ppm === 'number') payload.co2_ppm = input.co2_ppm;
+  if (typeof input.luminosidade_lux === 'number') payload.luminosidade_lux = input.luminosidade_lux;
+  if (input.timestamp) payload.timestamp = input.timestamp;
+
+  const { data, error } = await supabase
+    .from('leituras_sensores')
+    .insert(payload)
+    .select(`
+      *,
+      lote:lotes(
+        id,
+        codigo_lote,
+        sala,
+        produto:produtos(
+          temperatura_ideal_min,
+          temperatura_ideal_max,
+          umidade_ideal_min,
+          umidade_ideal_max
+        )
+      )
+    `)
+    .single();
+
+  if (error) throw error;
+
+  const loteUpdates: Record<string, unknown> = {};
+  if (typeof input.temperatura === 'number') loteUpdates.temperatura_atual = input.temperatura;
+  if (typeof input.umidade === 'number') loteUpdates.umidade_atual = input.umidade;
+
+  if (Object.keys(loteUpdates).length > 0) {
+    const { error: updateError } = await supabase
+      .from('lotes')
+      .update(loteUpdates)
+      .eq('id', input.lote_id);
+
+    if (updateError) {
+      console.error('Erro ao atualizar lote com leitura de sensor:', updateError);
+    }
+  }
+
+  return data;
+}
+
+interface GetLeiturasSensoresFilters {
+  lote_id?: string;
+  since?: string;
+  limit?: number;
+}
+
+export async function getLeiturasSensores(filters?: GetLeiturasSensoresFilters) {
+  let query = supabase
+    .from('leituras_sensores')
+    .select(`
+      *,
+      lote:lotes(
+        id,
+        codigo_lote,
+        sala,
+        produto:produtos(
+          temperatura_ideal_min,
+          temperatura_ideal_max,
+          umidade_ideal_min,
+          umidade_ideal_max
+        )
+      )
+    `)
+    .order('timestamp', { ascending: false })
+    .limit(filters?.limit ?? 500);
+
+  if (filters?.lote_id) {
+    query = query.eq('lote_id', filters.lote_id);
+  }
+
+  if (filters?.since) {
+    query = query.gte('timestamp', filters.since);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
 /**
  * COLHEITAS
  */
