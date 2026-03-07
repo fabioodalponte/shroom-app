@@ -34,6 +34,7 @@ Seguranca do flash:
 1. O flash so liga quando `flash=1` e desliga ao final da captura.
 2. Existe fail-safe no firmware que forca `OFF` automaticamente se ficar ligado por mais de ~10s.
 3. O endpoint `/flash/on` tambem agenda auto-off (padrao 3s), reduzindo risco de ficar ligado por engano.
+4. Capturas normais (`/capture`) nao desligam o flash quando ele foi ligado manualmente por `/flash/on`.
 
 ### Antes de gravar
 

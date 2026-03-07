@@ -259,15 +259,18 @@ void handleOptions() {
 }
 
 void handleCapture() {
+  const bool flashWasOnBeforeCapture = flashIsOn;
   bool useFlash = isFlashRequested();
-  if (useFlash) {
+  if (useFlash && !flashWasOnBeforeCapture) {
     setFlashLed(true);
     delay(FLASH_WARMUP_MS);
   }
 
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
-    setFlashLed(false);
+    if (useFlash && !flashWasOnBeforeCapture) {
+      setFlashLed(false);
+    }
     server.send(503, "text/plain", "camera capture failed");
     return;
   }
@@ -277,7 +280,9 @@ void handleCapture() {
   server.sendHeader("Content-Disposition", "inline; filename=capture.jpg");
   server.send_P(200, "image/jpeg", reinterpret_cast<const char *>(fb->buf), fb->len);
   esp_camera_fb_return(fb);
-  setFlashLed(false);
+  if (useFlash && !flashWasOnBeforeCapture) {
+    setFlashLed(false);
+  }
 }
 
 void handleNotFound() {
