@@ -17,7 +17,8 @@ import {
   Minus,
   Eye,
   Camera,
-  RefreshCcw
+  RefreshCcw,
+  SlidersHorizontal
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { format } from 'date-fns';
@@ -58,6 +59,31 @@ interface CameraConfig {
   gravacao_ativa?: boolean | null;
 }
 
+const CAMERA_FRAME_SIZE_OPTIONS = ['QQVGA', 'QVGA', 'CIF', 'VGA', 'SVGA', 'XGA'] as const;
+type CameraFrameSize = typeof CAMERA_FRAME_SIZE_OPTIONS[number];
+
+interface CameraImageControls {
+  framesize: CameraFrameSize;
+  quality: number;
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  hmirror: boolean;
+  vflip: boolean;
+  exposureCtrl: boolean;
+}
+
+const DEFAULT_CAMERA_IMAGE_CONTROLS: CameraImageControls = {
+  framesize: 'SVGA',
+  quality: 12,
+  brightness: 0,
+  contrast: 0,
+  saturation: 0,
+  hmirror: false,
+  vflip: false,
+  exposureCtrl: true,
+};
+
 function hasCameraStream(camera: CameraConfig | null | undefined) {
   return !!camera?.url_stream && camera.url_stream.trim().length > 0;
 }
@@ -83,25 +109,66 @@ function buildCameraImageUrl(url: string, token: number) {
   }
 }
 
-function buildCameraFlashUrl(streamUrl: string, command: 'on' | 'off') {
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeCameraControls(payload: Record<string, any> | null | undefined): CameraImageControls {
+  const frameCandidate = String(payload?.framesize || '').toUpperCase();
+  const framesize = CAMERA_FRAME_SIZE_OPTIONS.includes(frameCandidate as CameraFrameSize)
+    ? (frameCandidate as CameraFrameSize)
+    : DEFAULT_CAMERA_IMAGE_CONTROLS.framesize;
+
+  return {
+    framesize,
+    quality: clampNumber(Number(payload?.quality ?? DEFAULT_CAMERA_IMAGE_CONTROLS.quality), 10, 63),
+    brightness: clampNumber(Number(payload?.brightness ?? DEFAULT_CAMERA_IMAGE_CONTROLS.brightness), -2, 2),
+    contrast: clampNumber(Number(payload?.contrast ?? DEFAULT_CAMERA_IMAGE_CONTROLS.contrast), -2, 2),
+    saturation: clampNumber(Number(payload?.saturation ?? DEFAULT_CAMERA_IMAGE_CONTROLS.saturation), -2, 2),
+    hmirror: Boolean(Number(payload?.hmirror ?? 0)),
+    vflip: Boolean(Number(payload?.vflip ?? 0)),
+    exposureCtrl: Boolean(Number(payload?.exposure_ctrl ?? 1)),
+  };
+}
+
+function buildCameraControlUrl(
+  streamUrl: string,
+  endpointPath: string,
+  query?: Record<string, string | number>,
+) {
   const trimmed = streamUrl.trim();
   if (!trimmed) return '';
 
-  const commandPath = command === 'on' ? '/flash/on' : '/flash/off';
-
   try {
     const parsed = new URL(trimmed);
+    const normalizedPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
+
     if (parsed.pathname.endsWith('/capture')) {
       const basePath = parsed.pathname.slice(0, parsed.pathname.length - '/capture'.length) || '';
-      parsed.pathname = `${basePath}${commandPath}`;
+      parsed.pathname = `${basePath}${normalizedPath}`;
     } else {
-      parsed.pathname = commandPath;
+      parsed.pathname = normalizedPath;
     }
-    parsed.search = command === 'on' ? 'seconds=3' : '';
+
+    parsed.search = '';
+    if (query) {
+      Object.entries(query).forEach(([key, value]) => {
+        parsed.searchParams.set(key, String(value));
+      });
+    }
     return parsed.toString();
   } catch {
     return '';
   }
+}
+
+function buildCameraFlashUrl(streamUrl: string, command: 'on' | 'off') {
+  return buildCameraControlUrl(
+    streamUrl,
+    command === 'on' ? '/flash/on' : '/flash/off',
+    command === 'on' ? { seconds: 3 } : undefined,
+  );
 }
 
 export function Seguranca() {
@@ -119,6 +186,13 @@ export function Seguranca() {
   const [cameraFlashComando, setCameraFlashComando] = useState<'on' | 'off' | null>(null);
   const [cameraFlashInfo, setCameraFlashInfo] = useState<string | null>(null);
   const [cameraFlashErro, setCameraFlashErro] = useState<string | null>(null);
+  const [cameraConfigDialogOpen, setCameraConfigDialogOpen] = useState(false);
+  const [cameraConfigTarget, setCameraConfigTarget] = useState<CameraConfig | null>(null);
+  const [cameraControls, setCameraControls] = useState<CameraImageControls>(DEFAULT_CAMERA_IMAGE_CONTROLS);
+  const [cameraControlsLoading, setCameraControlsLoading] = useState(false);
+  const [cameraControlsSaving, setCameraControlsSaving] = useState(false);
+  const [cameraControlsInfo, setCameraControlsInfo] = useState<string | null>(null);
+  const [cameraControlsErro, setCameraControlsErro] = useState<string | null>(null);
 
   const carregarDados = useCallback(async () => {
     setLoading(true);
@@ -237,6 +311,97 @@ export function Seguranca() {
     setCameraDialogOpen(true);
   }, [getCameraForLote]);
 
+  const abrirConfiguracaoCamera = useCallback((camera: CameraConfig | null) => {
+    if (!camera) return;
+    setCameraConfigTarget(camera);
+    setCameraControls(DEFAULT_CAMERA_IMAGE_CONTROLS);
+    setCameraControlsInfo(null);
+    setCameraControlsErro(null);
+    setCameraConfigDialogOpen(true);
+  }, []);
+
+  const abrirConfiguracaoDoLote = useCallback((lote: LoteMonitoramento) => {
+    const camera = getCameraForLote(lote);
+    abrirConfiguracaoCamera(camera);
+  }, [abrirConfiguracaoCamera, getCameraForLote]);
+
+  const carregarControlesCamera = useCallback(async () => {
+    if (!cameraConfigTarget?.url_stream) {
+      setCameraControlsErro('Câmera sem URL configurada para leitura dos ajustes.');
+      return;
+    }
+
+    const configUrl = buildCameraControlUrl(cameraConfigTarget.url_stream, '/camera/config');
+    if (!configUrl) {
+      setCameraControlsErro('Não foi possível montar a URL de configuração da câmera.');
+      return;
+    }
+
+    setCameraControlsLoading(true);
+    setCameraControlsInfo(null);
+    setCameraControlsErro(null);
+
+    try {
+      const response = await fetch(configUrl, { method: 'GET', cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || `HTTP ${response.status}`);
+      }
+
+      setCameraControls(normalizeCameraControls(payload));
+      setCameraControlsInfo('Configuração carregada da câmera.');
+    } catch (error: any) {
+      setCameraControlsErro(`Falha ao carregar configuração: ${error?.message || 'erro desconhecido'}`);
+    } finally {
+      setCameraControlsLoading(false);
+    }
+  }, [cameraConfigTarget?.url_stream]);
+
+  const aplicarControlesCamera = useCallback(async () => {
+    if (!cameraConfigTarget?.url_stream) {
+      setCameraControlsErro('Câmera sem URL configurada para aplicar ajustes.');
+      return;
+    }
+
+    const setUrl = buildCameraControlUrl(cameraConfigTarget.url_stream, '/camera/set', {
+      framesize: cameraControls.framesize,
+      quality: cameraControls.quality,
+      brightness: cameraControls.brightness,
+      contrast: cameraControls.contrast,
+      saturation: cameraControls.saturation,
+      hmirror: cameraControls.hmirror ? 1 : 0,
+      vflip: cameraControls.vflip ? 1 : 0,
+      exposure_ctrl: cameraControls.exposureCtrl ? 1 : 0,
+    });
+
+    if (!setUrl) {
+      setCameraControlsErro('Não foi possível montar a URL para aplicar ajustes.');
+      return;
+    }
+
+    setCameraControlsSaving(true);
+    setCameraControlsInfo(null);
+    setCameraControlsErro(null);
+
+    try {
+      const response = await fetch(setUrl, { method: 'GET', cache: 'no-store' });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(payload?.message || payload?.error || `HTTP ${response.status}`);
+      }
+
+      setCameraControls(normalizeCameraControls(payload));
+      setCameraControlsInfo('Ajustes aplicados com sucesso.');
+      if (cameraSelecionada?.id === cameraConfigTarget.id) {
+        setCameraFrameToken(Date.now());
+      }
+    } catch (error: any) {
+      setCameraControlsErro(`Falha ao aplicar ajustes: ${error?.message || 'erro desconhecido'}`);
+    } finally {
+      setCameraControlsSaving(false);
+    }
+  }, [cameraConfigTarget, cameraControls, cameraSelecionada?.id]);
+
   const controlarFlashCamera = useCallback(async (command: 'on' | 'off') => {
     if (!cameraSelecionada?.url_stream) {
       setCameraFlashErro('Câmera sem URL configurada para controle de luz.');
@@ -267,7 +432,7 @@ export function Seguranca() {
       }
 
       if (!response.ok) {
-        throw new Error(payload?.error || `HTTP ${response.status}`);
+        throw new Error(payload?.message || payload?.error || `HTTP ${response.status}`);
       }
 
       if (command === 'on') {
@@ -287,6 +452,11 @@ export function Seguranca() {
     }
   }, [cameraSelecionada?.url_stream]);
 
+  useEffect(() => {
+    if (!cameraConfigDialogOpen || !cameraConfigTarget?.url_stream) return;
+    void carregarControlesCamera();
+  }, [cameraConfigDialogOpen, cameraConfigTarget?.id, cameraConfigTarget?.url_stream, carregarControlesCamera]);
+
   const handleCameraDialogChange = useCallback((open: boolean) => {
     setCameraDialogOpen(open);
 
@@ -297,6 +467,19 @@ export function Seguranca() {
       setCameraFlashComando(null);
       setCameraFlashInfo(null);
       setCameraFlashErro(null);
+    }
+  }, []);
+
+  const handleCameraConfigDialogChange = useCallback((open: boolean) => {
+    setCameraConfigDialogOpen(open);
+
+    if (!open) {
+      setCameraConfigTarget(null);
+      setCameraControls(DEFAULT_CAMERA_IMAGE_CONTROLS);
+      setCameraControlsLoading(false);
+      setCameraControlsSaving(false);
+      setCameraControlsInfo(null);
+      setCameraControlsErro(null);
     }
   }, []);
 
@@ -472,15 +655,26 @@ export function Seguranca() {
                     </Badge>
                   </CardTitle>
                 </div>
-	                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => abrirCameraDoLote(lote)}
-                    disabled={!cameraLote}
-                  >
-	                  <Eye className="w-4 h-4 mr-2" />
-	                  {cameraLote ? 'Câmera ao Vivo' : 'Sem Câmera'}
-	                </Button>
+	                <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => abrirConfiguracaoDoLote(lote)}
+                      disabled={!cameraLote}
+                    >
+                      <SlidersHorizontal className="w-4 h-4 mr-2" />
+                      Configurar
+                    </Button>
+	                  <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => abrirCameraDoLote(lote)}
+                      disabled={!cameraLote}
+                    >
+	                    <Eye className="w-4 h-4 mr-2" />
+	                    {cameraLote ? 'Câmera ao Vivo' : 'Sem Câmera'}
+	                  </Button>
+                  </div>
 	              </div>
 	            </CardHeader>
 
@@ -728,6 +922,13 @@ export function Seguranca() {
                 >
                   {cameraFlashComando === 'off' ? 'Desligando...' : 'Desligar luz'}
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => abrirConfiguracaoCamera(cameraSelecionada)}
+                >
+                  <SlidersHorizontal className="mr-2 h-4 w-4" />
+                  Configurar imagem
+                </Button>
                 <DialogClose asChild>
                   <Button variant="outline">Fechar</Button>
                 </DialogClose>
@@ -748,6 +949,161 @@ export function Seguranca() {
             <Card className="border-dashed">
               <CardContent className="py-10 text-center text-sm text-gray-600">
                 Câmera sem URL configurada. Preencha `url_stream` na tabela `cameras` para exibir no app.
+              </CardContent>
+            </Card>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cameraConfigDialogOpen} onOpenChange={handleCameraConfigDialogChange}>
+        <DialogContent className="w-[95vw] sm:max-w-2xl max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <SlidersHorizontal className="w-5 h-5" />
+              Configuração da Câmera
+            </DialogTitle>
+            <DialogDescription>
+              {cameraConfigTarget
+                ? `${cameraConfigTarget.nome} • ${cameraConfigTarget.localizacao}`
+                : 'Selecione uma câmera para configurar imagem.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {cameraConfigTarget?.url_stream ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => void carregarControlesCamera()}
+                  disabled={cameraControlsLoading || cameraControlsSaving}
+                >
+                  {cameraControlsLoading ? 'Lendo...' : 'Ler câmera'}
+                </Button>
+                <Button
+                  onClick={() => void aplicarControlesCamera()}
+                  disabled={cameraControlsLoading || cameraControlsSaving}
+                >
+                  {cameraControlsSaving ? 'Aplicando...' : 'Salvar ajustes'}
+                </Button>
+              </div>
+
+              <div className="rounded-lg border p-3 space-y-2">
+                <p className="text-sm font-medium">Perfis rápidos</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setCameraControls({
+                        framesize: 'SVGA',
+                        quality: 12,
+                        brightness: 0,
+                        contrast: 0,
+                        saturation: 0,
+                        hmirror: false,
+                        vflip: false,
+                        exposureCtrl: true,
+                      })
+                    }
+                  >
+                    Padrão Cultivo
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setCameraControls({
+                        framesize: 'VGA',
+                        quality: 14,
+                        brightness: 1,
+                        contrast: 1,
+                        saturation: 0,
+                        hmirror: false,
+                        vflip: false,
+                        exposureCtrl: true,
+                      })
+                    }
+                  >
+                    Baixa Luz
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setCameraControls({
+                        framesize: 'XGA',
+                        quality: 10,
+                        brightness: 0,
+                        contrast: 1,
+                        saturation: 1,
+                        hmirror: false,
+                        vflip: false,
+                        exposureCtrl: true,
+                      })
+                    }
+                  >
+                    Detalhe Máximo
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border p-3 space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Ajuste fino de brilho</p>
+                  <p className="text-xs text-gray-600">
+                    Use só para compensar ambiente mais escuro ou muito claro.
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs text-gray-600">Brilho: {cameraControls.brightness}</p>
+                  <input
+                    type="range"
+                    min={-2}
+                    max={2}
+                    step={1}
+                    value={cameraControls.brightness}
+                    onChange={(event) =>
+                      setCameraControls((prev) => ({
+                        ...prev,
+                        brightness: clampNumber(Number.parseInt(event.target.value, 10), -2, 2),
+                      }))
+                    }
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setCameraControls((prev) => ({
+                        ...prev,
+                        brightness: 0,
+                      }))
+                    }
+                  >
+                    Reset brilho
+                  </Button>
+                </div>
+              </div>
+
+              {cameraControlsInfo && (
+                <p className="text-xs text-green-700">{cameraControlsInfo}</p>
+              )}
+              {cameraControlsErro && (
+                <p className="text-xs text-red-600">{cameraControlsErro}</p>
+              )}
+
+              <p className="text-xs text-gray-500">
+                Fluxo recomendado: escolha um perfil rápido, ajuste só o brilho e salve.
+              </p>
+            </div>
+          ) : (
+            <Card className="border-dashed">
+              <CardContent className="py-8 text-center text-sm text-gray-600">
+                Câmera sem URL configurada para ajustes.
               </CardContent>
             </Card>
           )}

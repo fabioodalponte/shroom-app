@@ -26,8 +26,10 @@ Esse firmware expoe:
 3. `GET /flash/on?seconds=3` - liga a luz por alguns segundos (default 3s, max 10s)
 4. `GET /flash/off` - desliga a luz imediatamente
 5. `GET /flash/status` - status da luz e tempo restante
-6. `GET /health` - status basico em JSON
-7. `GET /` - pagina simples com preview
+6. `GET /camera/config` - retorna configuracao atual de imagem
+7. `GET /camera/set?...` - aplica ajustes de imagem
+8. `GET /health` - status basico em JSON
+9. `GET /` - pagina simples com preview
 
 Seguranca do flash:
 
@@ -35,6 +37,17 @@ Seguranca do flash:
 2. Existe fail-safe no firmware que forca `OFF` automaticamente se ficar ligado por mais de ~10s.
 3. O endpoint `/flash/on` tambem agenda auto-off (padrao 3s), reduzindo risco de ficar ligado por engano.
 4. Capturas normais (`/capture`) nao desligam o flash quando ele foi ligado manualmente por `/flash/on`.
+
+Ajustes aceitos em `/camera/set`:
+
+1. `framesize`: `QQVGA|QVGA|CIF|VGA|SVGA|XGA`
+2. `quality`: `10..63`
+3. `brightness`: `-2..2`
+4. `contrast`: `-2..2`
+5. `saturation`: `-2..2`
+6. `hmirror`: `0|1`
+7. `vflip`: `0|1`
+8. `exposure_ctrl`: `0|1`
 
 ### Antes de gravar
 

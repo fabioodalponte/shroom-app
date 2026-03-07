@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include "esp_camera.h"
+#include <stdlib.h>
 
 // ===========================
 // WIFI
@@ -36,6 +37,22 @@ const uint16_t FLASH_WARMUP_MS = 120;
 const uint16_t FLASH_MAX_ON_MS = 10000;
 const uint16_t FLASH_MANUAL_DEFAULT_MS = 3000;
 const uint16_t FLASH_MANUAL_MAX_MS = 10000;
+
+struct FrameSizeOption {
+  const char *name;
+  framesize_t value;
+};
+
+const FrameSizeOption FRAME_SIZE_OPTIONS[] = {
+  {"QQVGA", FRAMESIZE_QQVGA},
+  {"QVGA", FRAMESIZE_QVGA},
+  {"CIF", FRAMESIZE_CIF},
+  {"VGA", FRAMESIZE_VGA},
+  {"SVGA", FRAMESIZE_SVGA},
+  {"XGA", FRAMESIZE_XGA},
+};
+
+const size_t FRAME_SIZE_OPTIONS_COUNT = sizeof(FRAME_SIZE_OPTIONS) / sizeof(FRAME_SIZE_OPTIONS[0]);
 
 WebServer server(80);
 unsigned long lastWifiCheckMs = 0;
@@ -73,6 +90,10 @@ void sendCorsJson(int statusCode, const String &json) {
   server.send(statusCode, "application/json", json);
 }
 
+String makeJsonError(const String &message) {
+  return String("{\"status\":\"error\",\"message\":\"") + message + "\"}";
+}
+
 bool hasReachedDeadline(unsigned long deadlineMs) {
   return static_cast<long>(millis() - deadlineMs) >= 0;
 }
@@ -102,6 +123,79 @@ bool isFlashRequested() {
   value.toLowerCase();
   value.trim();
   return value == "1" || value == "on" || value == "true" || value == "yes";
+}
+
+bool parseBooleanString(const String &value, bool &outValue) {
+  String normalized = value;
+  normalized.trim();
+  normalized.toLowerCase();
+
+  if (normalized == "1" || normalized == "true" || normalized == "on" || normalized == "yes") {
+    outValue = true;
+    return true;
+  }
+  if (normalized == "0" || normalized == "false" || normalized == "off" || normalized == "no") {
+    outValue = false;
+    return true;
+  }
+  return false;
+}
+
+bool parseBoundedIntString(const String &value, int minValue, int maxValue, int &outValue) {
+  char *endPtr = nullptr;
+  long parsed = strtol(value.c_str(), &endPtr, 10);
+  if (endPtr == value.c_str() || *endPtr != '\0') return false;
+  if (parsed < minValue || parsed > maxValue) return false;
+
+  outValue = static_cast<int>(parsed);
+  return true;
+}
+
+const char *frameSizeToName(framesize_t frameSize) {
+  for (size_t i = 0; i < FRAME_SIZE_OPTIONS_COUNT; i++) {
+    if (FRAME_SIZE_OPTIONS[i].value == frameSize) {
+      return FRAME_SIZE_OPTIONS[i].name;
+    }
+  }
+  return "UNKNOWN";
+}
+
+bool parseFrameSizeString(const String &value, framesize_t &outFrameSize) {
+  String normalized = value;
+  normalized.trim();
+  normalized.toUpperCase();
+
+  for (size_t i = 0; i < FRAME_SIZE_OPTIONS_COUNT; i++) {
+    if (normalized == FRAME_SIZE_OPTIONS[i].name) {
+      outFrameSize = FRAME_SIZE_OPTIONS[i].value;
+      return true;
+    }
+  }
+  return false;
+}
+
+String buildCameraConfigJson(sensor_t *sensor) {
+  String json = "{";
+  json += "\"status\":\"ok\",";
+  json += "\"framesize\":\"" + String(frameSizeToName(static_cast<framesize_t>(sensor->status.framesize))) + "\",";
+  json += "\"quality\":" + String(sensor->status.quality) + ",";
+  json += "\"brightness\":" + String(sensor->status.brightness) + ",";
+  json += "\"contrast\":" + String(sensor->status.contrast) + ",";
+  json += "\"saturation\":" + String(sensor->status.saturation) + ",";
+  json += "\"hmirror\":" + String(sensor->status.hmirror ? 1 : 0) + ",";
+  json += "\"vflip\":" + String(sensor->status.vflip ? 1 : 0) + ",";
+  json += "\"exposure_ctrl\":" + String(sensor->status.aec ? 1 : 0) + ",";
+  json += "\"supported_framesizes\":[";
+
+  for (size_t i = 0; i < FRAME_SIZE_OPTIONS_COUNT; i++) {
+    json += "\"" + String(FRAME_SIZE_OPTIONS[i].name) + "\"";
+    if (i + 1 < FRAME_SIZE_OPTIONS_COUNT) {
+      json += ",";
+    }
+  }
+  json += "]";
+  json += "}";
+  return json;
 }
 
 void connectWiFi() {
@@ -190,6 +284,8 @@ void handleRoot() {
   html += "<p>Use <code>/capture?flash=1</code> para snapshot com flash.</p>";
   html += "<p>Use <code>/flash/on?seconds=3</code> para ligar luz por alguns segundos.</p>";
   html += "<p>Use <code>/flash/off</code> para desligar luz imediatamente.</p>";
+  html += "<p>Use <code>/camera/config</code> para ler ajustes de imagem.</p>";
+  html += "<p>Use <code>/camera/set?framesize=SVGA&brightness=1</code> para aplicar ajustes.</p>";
   html += "<p>Use <code>/health</code> para status.</p>";
   html += "<img src='/capture' style='max-width:100%;height:auto' />";
   html += "</body></html>";
@@ -206,6 +302,134 @@ void handleHealth() {
   json += "}";
 
   sendCorsJson(200, json);
+}
+
+void handleCameraConfig() {
+  sensor_t *sensor = esp_camera_sensor_get();
+  if (sensor == nullptr) {
+    sendCorsJson(500, makeJsonError("camera sensor unavailable"));
+    return;
+  }
+
+  sendCorsJson(200, buildCameraConfigJson(sensor));
+}
+
+void handleCameraSet() {
+  sensor_t *sensor = esp_camera_sensor_get();
+  if (sensor == nullptr) {
+    sendCorsJson(500, makeJsonError("camera sensor unavailable"));
+    return;
+  }
+
+  bool hasFramesize = false;
+  bool hasQuality = false;
+  bool hasBrightness = false;
+  bool hasContrast = false;
+  bool hasSaturation = false;
+  bool hasHmirror = false;
+  bool hasVflip = false;
+  bool hasExposureCtrl = false;
+
+  framesize_t frameSizeValue = FRAMESIZE_SVGA;
+  int qualityValue = 12;
+  int brightnessValue = 0;
+  int contrastValue = 0;
+  int saturationValue = 0;
+  bool hmirrorValue = false;
+  bool vflipValue = false;
+  bool exposureCtrlValue = true;
+
+  if (server.hasArg("framesize")) {
+    hasFramesize = true;
+    if (!parseFrameSizeString(server.arg("framesize"), frameSizeValue)) {
+      sendCorsJson(400, makeJsonError("framesize invalido"));
+      return;
+    }
+  }
+  if (server.hasArg("quality")) {
+    hasQuality = true;
+    if (!parseBoundedIntString(server.arg("quality"), 10, 63, qualityValue)) {
+      sendCorsJson(400, makeJsonError("quality invalido (10-63)"));
+      return;
+    }
+  }
+  if (server.hasArg("brightness")) {
+    hasBrightness = true;
+    if (!parseBoundedIntString(server.arg("brightness"), -2, 2, brightnessValue)) {
+      sendCorsJson(400, makeJsonError("brightness invalido (-2..2)"));
+      return;
+    }
+  }
+  if (server.hasArg("contrast")) {
+    hasContrast = true;
+    if (!parseBoundedIntString(server.arg("contrast"), -2, 2, contrastValue)) {
+      sendCorsJson(400, makeJsonError("contrast invalido (-2..2)"));
+      return;
+    }
+  }
+  if (server.hasArg("saturation")) {
+    hasSaturation = true;
+    if (!parseBoundedIntString(server.arg("saturation"), -2, 2, saturationValue)) {
+      sendCorsJson(400, makeJsonError("saturation invalido (-2..2)"));
+      return;
+    }
+  }
+  if (server.hasArg("hmirror")) {
+    hasHmirror = true;
+    if (!parseBooleanString(server.arg("hmirror"), hmirrorValue)) {
+      sendCorsJson(400, makeJsonError("hmirror invalido (0/1)"));
+      return;
+    }
+  }
+  if (server.hasArg("vflip")) {
+    hasVflip = true;
+    if (!parseBooleanString(server.arg("vflip"), vflipValue)) {
+      sendCorsJson(400, makeJsonError("vflip invalido (0/1)"));
+      return;
+    }
+  }
+  if (server.hasArg("exposure_ctrl")) {
+    hasExposureCtrl = true;
+    if (!parseBooleanString(server.arg("exposure_ctrl"), exposureCtrlValue)) {
+      sendCorsJson(400, makeJsonError("exposure_ctrl invalido (0/1)"));
+      return;
+    }
+  }
+
+  if (hasFramesize && sensor->set_framesize(sensor, frameSizeValue) != 0) {
+    sendCorsJson(500, makeJsonError("falha ao aplicar framesize"));
+    return;
+  }
+  if (hasQuality && sensor->set_quality(sensor, qualityValue) != 0) {
+    sendCorsJson(500, makeJsonError("falha ao aplicar quality"));
+    return;
+  }
+  if (hasBrightness && sensor->set_brightness(sensor, brightnessValue) != 0) {
+    sendCorsJson(500, makeJsonError("falha ao aplicar brightness"));
+    return;
+  }
+  if (hasContrast && sensor->set_contrast(sensor, contrastValue) != 0) {
+    sendCorsJson(500, makeJsonError("falha ao aplicar contrast"));
+    return;
+  }
+  if (hasSaturation && sensor->set_saturation(sensor, saturationValue) != 0) {
+    sendCorsJson(500, makeJsonError("falha ao aplicar saturation"));
+    return;
+  }
+  if (hasHmirror && sensor->set_hmirror(sensor, hmirrorValue ? 1 : 0) != 0) {
+    sendCorsJson(500, makeJsonError("falha ao aplicar hmirror"));
+    return;
+  }
+  if (hasVflip && sensor->set_vflip(sensor, vflipValue ? 1 : 0) != 0) {
+    sendCorsJson(500, makeJsonError("falha ao aplicar vflip"));
+    return;
+  }
+  if (hasExposureCtrl && sensor->set_exposure_ctrl(sensor, exposureCtrlValue ? 1 : 0) != 0) {
+    sendCorsJson(500, makeJsonError("falha ao aplicar exposure_ctrl"));
+    return;
+  }
+
+  sendCorsJson(200, buildCameraConfigJson(sensor));
 }
 
 void handleFlashOn() {
@@ -306,12 +530,16 @@ void setup() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/health", HTTP_GET, handleHealth);
   server.on("/capture", HTTP_GET, handleCapture);
+  server.on("/camera/config", HTTP_GET, handleCameraConfig);
+  server.on("/camera/set", HTTP_GET, handleCameraSet);
   server.on("/flash/on", HTTP_GET, handleFlashOn);
   server.on("/flash/off", HTTP_GET, handleFlashOff);
   server.on("/flash/status", HTTP_GET, handleFlashStatus);
 
   server.on("/health", HTTP_OPTIONS, handleOptions);
   server.on("/capture", HTTP_OPTIONS, handleOptions);
+  server.on("/camera/config", HTTP_OPTIONS, handleOptions);
+  server.on("/camera/set", HTTP_OPTIONS, handleOptions);
   server.on("/flash/on", HTTP_OPTIONS, handleOptions);
   server.on("/flash/off", HTTP_OPTIONS, handleOptions);
   server.on("/flash/status", HTTP_OPTIONS, handleOptions);
