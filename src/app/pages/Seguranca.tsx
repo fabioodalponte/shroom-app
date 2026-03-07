@@ -83,6 +83,27 @@ function buildCameraImageUrl(url: string, token: number) {
   }
 }
 
+function buildCameraFlashUrl(streamUrl: string, command: 'on' | 'off') {
+  const trimmed = streamUrl.trim();
+  if (!trimmed) return '';
+
+  const commandPath = command === 'on' ? '/flash/on' : '/flash/off';
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.pathname.endsWith('/capture')) {
+      const basePath = parsed.pathname.slice(0, parsed.pathname.length - '/capture'.length) || '';
+      parsed.pathname = `${basePath}${commandPath}`;
+    } else {
+      parsed.pathname = commandPath;
+    }
+    parsed.search = command === 'on' ? 'seconds=3' : '';
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
 export function Seguranca() {
   const [lotes, setLotes] = useState<LoteMonitoramento[]>([]);
   const [cameras, setCameras] = useState<CameraConfig[]>([]);
@@ -95,6 +116,9 @@ export function Seguranca() {
   const [cameraFrameToken, setCameraFrameToken] = useState(Date.now());
   const [cameraErroCarregamento, setCameraErroCarregamento] = useState<string | null>(null);
   const [autoAtualizarCamera, setAutoAtualizarCamera] = useState(false);
+  const [cameraFlashComando, setCameraFlashComando] = useState<'on' | 'off' | null>(null);
+  const [cameraFlashInfo, setCameraFlashInfo] = useState<string | null>(null);
+  const [cameraFlashErro, setCameraFlashErro] = useState<string | null>(null);
 
   const carregarDados = useCallback(async () => {
     setLoading(true);
@@ -208,8 +232,60 @@ export function Seguranca() {
     setCameraErroCarregamento(null);
     setCameraFrameToken(Date.now());
     setAutoAtualizarCamera(false);
+    setCameraFlashInfo(null);
+    setCameraFlashErro(null);
     setCameraDialogOpen(true);
   }, [getCameraForLote]);
+
+  const controlarFlashCamera = useCallback(async (command: 'on' | 'off') => {
+    if (!cameraSelecionada?.url_stream) {
+      setCameraFlashErro('Câmera sem URL configurada para controle de luz.');
+      return;
+    }
+
+    const flashUrl = buildCameraFlashUrl(cameraSelecionada.url_stream, command);
+    if (!flashUrl) {
+      setCameraFlashErro('Não foi possível gerar a URL de controle da luz.');
+      return;
+    }
+
+    setCameraFlashComando(command);
+    setCameraFlashInfo(null);
+    setCameraFlashErro(null);
+
+    try {
+      const response = await fetch(flashUrl, {
+        method: 'GET',
+        cache: 'no-store',
+      });
+
+      let payload: Record<string, any> | null = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      if (command === 'on') {
+        const autoOffMs = Number(payload?.auto_off_ms);
+        const autoOffInfo = Number.isFinite(autoOffMs) && autoOffMs > 0
+          ? ` Auto-off em ${Math.round(autoOffMs / 1000)}s.`
+          : '';
+        setCameraFlashInfo(`Luz ligada.${autoOffInfo}`);
+        setCameraFrameToken(Date.now());
+      } else {
+        setCameraFlashInfo('Luz desligada.');
+      }
+    } catch (error: any) {
+      setCameraFlashErro(`Falha ao controlar luz: ${error?.message || 'erro desconhecido'}`);
+    } finally {
+      setCameraFlashComando(null);
+    }
+  }, [cameraSelecionada?.url_stream]);
 
   const handleCameraDialogChange = useCallback((open: boolean) => {
     setCameraDialogOpen(open);
@@ -218,6 +294,9 @@ export function Seguranca() {
       setAutoAtualizarCamera(false);
       setCameraErroCarregamento(null);
       setCameraSelecionada(null);
+      setCameraFlashComando(null);
+      setCameraFlashInfo(null);
+      setCameraFlashErro(null);
     }
   }, []);
 
@@ -635,10 +714,31 @@ export function Seguranca() {
                 >
                   {autoAtualizarCamera ? 'Auto atualização ON (8s)' : 'Auto atualização OFF'}
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void controlarFlashCamera('on')}
+                  disabled={cameraFlashComando !== null}
+                >
+                  {cameraFlashComando === 'on' ? 'Ligando luz...' : 'Ligar luz (3s)'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void controlarFlashCamera('off')}
+                  disabled={cameraFlashComando !== null}
+                >
+                  {cameraFlashComando === 'off' ? 'Desligando...' : 'Desligar luz'}
+                </Button>
                 <DialogClose asChild>
                   <Button variant="outline">Fechar</Button>
                 </DialogClose>
               </div>
+
+              {cameraFlashInfo && (
+                <p className="text-xs text-green-700">{cameraFlashInfo}</p>
+              )}
+              {cameraFlashErro && (
+                <p className="text-xs text-red-600">{cameraFlashErro}</p>
+              )}
 
               <p className="text-xs text-gray-500">
                 Para ESP32-CAM com resposta lenta, use a URL de snapshot (ex.: `http://IP_DA_CAM/capture`) no campo `url_stream`.

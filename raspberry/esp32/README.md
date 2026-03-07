@@ -22,8 +22,18 @@ Arquivo: `esp32_cam_capture.ino`
 Esse firmware expoe:
 
 1. `GET /capture` - snapshot JPEG (endpoint principal para app/tunnel)
-2. `GET /health` - status basico em JSON
-3. `GET /` - pagina simples com preview
+2. `GET /capture?flash=1` - snapshot com LED flash ligado durante a captura
+3. `GET /flash/on?seconds=3` - liga a luz por alguns segundos (default 3s, max 10s)
+4. `GET /flash/off` - desliga a luz imediatamente
+5. `GET /flash/status` - status da luz e tempo restante
+6. `GET /health` - status basico em JSON
+7. `GET /` - pagina simples com preview
+
+Seguranca do flash:
+
+1. O flash so liga quando `flash=1` e desliga ao final da captura.
+2. Existe fail-safe no firmware que forca `OFF` automaticamente se ficar ligado por mais de ~10s.
+3. O endpoint `/flash/on` tambem agenda auto-off (padrao 3s), reduzindo risco de ficar ligado por engano.
 
 ### Antes de gravar
 
