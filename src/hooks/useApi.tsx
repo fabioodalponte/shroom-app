@@ -180,6 +180,43 @@ export function useUpdateLote(id: string) {
   });
 }
 
+export function useLoteBlocos(loteId: string) {
+  return useGet(`/lotes/${loteId}/blocos`);
+}
+
+export function useLoteEventos(loteId: string) {
+  return useGet(`/lotes/${loteId}/eventos`);
+}
+
+export function useInsumos() {
+  return useGet('/insumos');
+}
+
+export function useConsumoInsumosLote(loteId: string) {
+  return useGet(`/lotes/${loteId}/consumos-insumos`);
+}
+
+export function useConsumirInsumo(loteId: string) {
+  return usePost(`/lotes/${loteId}/consumos-insumos`, {
+    showSuccessToast: true,
+    successMessage: 'Consumo de insumo registrado com sucesso!',
+  });
+}
+
+export function useRegistrarInoculacao(loteId: string) {
+  return usePost(`/lotes/${loteId}/inoculacao`, {
+    showSuccessToast: true,
+    successMessage: 'Operação de inoculação registrada com sucesso!',
+  });
+}
+
+export function useRegistrarFrutificacao(loteId: string) {
+  return usePost(`/lotes/${loteId}/frutificacao`, {
+    showSuccessToast: true,
+    successMessage: 'Operação de frutificação registrada com sucesso!',
+  });
+}
+
 // Colheitas
 export function useColheitas() {
   return useGet('/colheitas');

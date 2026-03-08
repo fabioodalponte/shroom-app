@@ -1,31 +1,42 @@
-import { Outlet, NavLink, useNavigate } from 'react-router';
-import { useState } from 'react';
-import { 
-  LayoutDashboard, 
-  Package, 
-  Scissors, 
-  Box, 
-  ShoppingCart, 
-  ShoppingBag,
-  Truck, 
-  GraduationCap, 
-  DollarSign, 
-  User, 
-  Menu, 
-  X,
-  LogOut,
+import { Outlet, useNavigate } from 'react-router';
+import { useEffect, useState } from 'react';
+import {
+  Beaker,
+  Box,
+  ClipboardList,
+  DollarSign,
+  GraduationCap,
+  LayoutDashboard,
+  Menu,
+  Package,
+  Scissors,
   Shield,
-  Bug,
-  ClipboardList
+  ShoppingBag,
+  ShoppingCart,
+  Sprout,
+  Truck,
+  User,
 } from 'lucide-react';
-import { MushroomIcon } from '../../components/MushroomIcon';
-import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'sonner@2.0.3';
+import { useAuth } from '../../contexts/AuthContext';
+import { MushroomIcon } from '../../components/MushroomIcon';
+import { cn } from '../../components/ui/utils';
+import { SidebarNavigation } from './SidebarNavigation';
+
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'shroom.sidebar.collapsed';
 
 export function AppLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
   const { usuario, signOut } = useAuth();
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+
+    const stored = window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
+    if (stored !== null) return stored === '1';
+
+    return window.matchMedia('(max-width: 1280px)').matches;
+  });
 
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -37,10 +48,55 @@ export function AppLayout() {
     { to: '/logistica', icon: Truck, label: 'Logística' },
     { to: '/motoristas', icon: User, label: 'Motoristas' },
     { to: '/seguranca', icon: Shield, label: 'Segurança' },
+    { to: '/operacao/inoculacao', icon: Beaker, label: 'Inoculação' },
+    { to: '/operacao/frutificacao', icon: Sprout, label: 'Frutificação' },
     { to: '/treinamento', icon: GraduationCap, label: 'Treinamento' },
     { to: '/checklists', icon: ClipboardList, label: 'Checklists' },
     { to: '/financeiro', icon: DollarSign, label: 'Financeiro' },
   ];
+
+  useEffect(() => {
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0');
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (!mobileSidebarOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMobileSidebarOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [mobileSidebarOpen]);
+
+  useEffect(() => {
+    if (!mobileSidebarOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileSidebarOpen]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 1024px)');
+
+    const handleChange = () => {
+      if (mediaQuery.matches) {
+        setMobileSidebarOpen(false);
+      }
+    };
+
+    handleChange();
+    mediaQuery.addEventListener('change', handleChange);
+
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -58,13 +114,12 @@ export function AppLayout() {
     producao: 'Produção',
     motorista: 'Motorista',
     vendas: 'Vendas',
-    cliente: 'Cliente'
+    cliente: 'Cliente',
   } as const;
 
   return (
     <div className="min-h-screen bg-[#F8F6F2]">
-      {/* Mobile Header */}
-      <header className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-[#1A1A1A] text-white">
+      <header className="lg:hidden fixed top-0 left-0 right-0 z-30 bg-[#1A1A1A] text-white border-b border-[#2A2A2A]">
         <div className="flex items-center justify-between px-4 h-16">
           <div className="flex items-center gap-3">
             <MushroomIcon className="w-8 h-8 text-[#A88F52]" />
@@ -72,105 +127,90 @@ export function AppLayout() {
               Shroom Bros
             </span>
           </div>
+
           <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2"
+            type="button"
+            onClick={() => setMobileSidebarOpen(true)}
+            className="rounded-md p-2 hover:bg-[#2A2A2A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A88F52]/70"
+            aria-label="Abrir menu principal"
+            aria-expanded={mobileSidebarOpen}
+            aria-controls="mobile-sidebar"
           >
-            {sidebarOpen ? <X size={24} /> : <Menu size={24} />}
+            <Menu size={24} />
           </button>
         </div>
       </header>
 
-      {/* Sidebar */}
       <aside
-        className={`
-          fixed top-0 left-0 bottom-0 w-64 bg-[#1A1A1A] text-white z-40
-          transition-transform duration-300 lg:translate-x-0
-          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-        `}
+        className={cn(
+          'hidden lg:flex fixed top-0 left-0 bottom-0 z-40 bg-[#1A1A1A] text-white transition-[width] duration-300 motion-reduce:transition-none',
+          sidebarCollapsed ? 'w-20' : 'w-64',
+        )}
+        aria-label="Menu lateral"
       >
-        {/* Logo */}
-        <div className="hidden lg:flex items-center gap-3 p-6 border-b border-[#2A2A2A]">
-          <MushroomIcon className="w-10 h-10 text-[#A88F52]" />
-          <div>
-            <h1 className="font-['Cormorant_Garamond']" style={{ fontSize: '24px', fontWeight: 700 }}>
-              Shroom Bros
-            </h1>
-            <p className="text-xs text-[#A88F52]">Gestão de Produção</p>
-          </div>
-        </div>
-
-        {/* Navigation */}
-        <nav className="p-4 space-y-1 mt-16 lg:mt-0">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                onClick={() => setSidebarOpen(false)}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-[#A88F52] text-white'
-                      : 'text-[#E3E3E3] hover:bg-[#2A2A2A]'
-                  }`
-                }
-              >
-                <Icon size={20} />
-                <span>{item.label}</span>
-              </NavLink>
-            );
-          })}
-        </nav>
-
-        {/* User Section */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-[#2A2A2A]">
-          <NavLink
-            to="/debug"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 px-4 py-2 rounded-lg hover:bg-[#2A2A2A] transition-colors mb-2 text-xs text-yellow-400"
-          >
-            <Bug size={16} />
-            <span>Debug & Testes</span>
-          </NavLink>
-          <NavLink
-            to="/perfil"
-            onClick={() => setSidebarOpen(false)}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-[#2A2A2A] transition-colors mb-2"
-          >
-            <User size={20} />
-            <div className="flex-1">
-              <p className="text-sm">{usuario?.nome || 'Usuário'}</p>
-              <p className="text-xs text-[#A88F52]">
-                {usuario?.tipo_usuario ? tipoUsuarioLabel[usuario.tipo_usuario] : 'Sem perfil'}
-              </p>
-            </div>
-          </NavLink>
-          <button
-            onClick={() => {
-              void handleLogout();
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-red-900/20 text-red-400 transition-colors w-full"
-          >
-            <LogOut size={20} />
-            <span>Sair</span>
-          </button>
-        </div>
+        <SidebarNavigation
+          navItems={navItems}
+          collapsed={sidebarCollapsed}
+          mobile={false}
+          usuarioNome={usuario?.nome}
+          usuarioTipo={usuario?.tipo_usuario}
+          tipoUsuarioLabel={tipoUsuarioLabel as Record<string, string>}
+          onNavigate={() => setMobileSidebarOpen(false)}
+          onLogout={() => {
+            void handleLogout();
+          }}
+          onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+        />
       </aside>
 
-      {/* Main Content */}
-      <main className="lg:ml-64 min-h-screen pt-16 lg:pt-0">
+      <div
+        className={cn(
+          'fixed inset-0 z-40 bg-black/50 transition-opacity duration-200 motion-reduce:transition-none lg:hidden',
+          mobileSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
+        )}
+      >
+        <button
+          type="button"
+          className="w-full h-full"
+          aria-label="Fechar menu"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      </div>
+
+      <aside
+        id="mobile-sidebar"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Menu principal"
+        className={cn(
+          'fixed top-0 left-0 bottom-0 z-50 w-[min(85vw,320px)] bg-[#1A1A1A] text-white transition-transform duration-300 motion-reduce:transition-none lg:hidden',
+          mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full',
+        )}
+      >
+        <SidebarNavigation
+          navItems={navItems}
+          collapsed={false}
+          mobile
+          usuarioNome={usuario?.nome}
+          usuarioTipo={usuario?.tipo_usuario}
+          tipoUsuarioLabel={tipoUsuarioLabel as Record<string, string>}
+          onNavigate={() => setMobileSidebarOpen(false)}
+          onCloseMobile={() => setMobileSidebarOpen(false)}
+          onLogout={() => {
+            setMobileSidebarOpen(false);
+            void handleLogout();
+          }}
+        />
+      </aside>
+
+      <main
+        className={cn(
+          'min-h-screen pt-16 lg:pt-0 transition-[margin-left] duration-300 motion-reduce:transition-none',
+          sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64',
+        )}
+      >
         <Outlet />
       </main>
-
-      {/* Overlay for mobile */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-30 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
     </div>
   );
 }

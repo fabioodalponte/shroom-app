@@ -37,11 +37,17 @@ interface LoteMonitoramento {
   id: string;
   codigo_lote: string;
   sala: string;
+  fase_operacional?: string | null;
   sensor_atual: {
     temperatura: number;
     umidade: number;
     co2: number;
     pm25?: number;
+  };
+  blocos_resumo?: {
+    total: number;
+    frutificacao: number;
+    colhido: number;
   };
   historico: SensorData[];
   score_risco: number; // 0-100
@@ -93,6 +99,20 @@ function normalizeText(value: string) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+}
+
+function formatFaseLabel(fase?: string | null) {
+  const labels: Record<string, string> = {
+    esterilizacao: 'Esterilização',
+    inoculacao: 'Inoculação',
+    incubacao: 'Incubação',
+    frutificacao: 'Frutificação',
+    colheita: 'Colheita',
+    encerramento: 'Encerramento',
+  };
+
+  if (!fase) return 'Não definida';
+  return labels[fase] || fase;
 }
 
 function buildCameraImageUrl(url: string, token: number) {
@@ -524,7 +544,7 @@ export function Seguranca() {
             <SelectItem value="todos">Todos os Lotes</SelectItem>
             {lotes.map(lote => (
               <SelectItem key={lote.id} value={lote.id}>
-                {lote.codigo_lote} - {lote.sala}
+                {lote.codigo_lote} - {lote.sala} ({formatFaseLabel(lote.fase_operacional)})
               </SelectItem>
             ))}
           </SelectContent>
@@ -650,8 +670,15 @@ export function Seguranca() {
                   <CardTitle className="flex items-center gap-3">
                     <span className="text-2xl font-['Cormorant_Garamond']">{lote.codigo_lote}</span>
                     <Badge variant="outline">{lote.sala}</Badge>
+                    <Badge variant="outline">{formatFaseLabel(lote.fase_operacional)}</Badge>
                     <Badge className={`${risco.bg} ${risco.text}`}>
                       {risco.label} ({lote.score_risco}%)
+                    </Badge>
+                    <Badge variant="outline">
+                      Blocos: {lote.blocos_resumo?.total || 0}
+                    </Badge>
+                    <Badge variant="outline">
+                      Frutificação: {lote.blocos_resumo?.frutificacao || 0}
                     </Badge>
                   </CardTitle>
                 </div>

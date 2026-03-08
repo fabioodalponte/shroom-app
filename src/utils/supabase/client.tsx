@@ -29,24 +29,37 @@ export async function fetchServer(endpoint: string, options: RequestInit = {}, a
         ...options.headers,
       },
     });
+    const rawBody = await response.text();
+    let parsedBody: any = null;
+    if (rawBody) {
+      try {
+        parsedBody = JSON.parse(rawBody);
+      } catch {
+        parsedBody = null;
+      }
+    }
 
     if (!response.ok) {
-      let error: any = {};
-      try {
-        error = await response.json();
-      } catch {
-        error = { error: await response.text() };
-      }
+      const errorPayload = parsedBody || { error: rawBody };
       console.error('❌ Erro na requisição:', {
         endpoint,
         status: response.status,
-        error,
+        error: errorPayload,
         body: options.body
       });
-      throw new Error(error.error || `Erro na requisição (${response.status})`);
+      throw new Error(
+        errorPayload?.error ||
+        errorPayload?.message ||
+        rawBody ||
+        `Erro na requisição (${response.status})`
+      );
     }
 
-    return response.json();
+    if (!rawBody) {
+      return {};
+    }
+
+    return parsedBody ?? { data: rawBody };
   } catch (error: any) {
     if (error?.name === 'AbortError') {
       throw new Error('Tempo limite excedido ao conectar com o servidor');

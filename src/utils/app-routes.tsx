@@ -21,6 +21,8 @@ import { Financeiro } from "../app/pages/Financeiro";
 import { Perfil } from "../app/pages/Perfil";
 import { Seguranca } from "../app/pages/Seguranca";
 import { Debug } from "../app/pages/Debug";
+import { OperacaoInoculacao } from "../app/pages/OperacaoInoculacao";
+import { OperacaoFrutificacao } from "../app/pages/OperacaoFrutificacao";
 
 export const router = createBrowserRouter([
   {
@@ -98,6 +100,14 @@ export const router = createBrowserRouter([
       {
         path: "seguranca",
         Component: Seguranca,
+      },
+      {
+        path: "operacao/inoculacao",
+        Component: OperacaoInoculacao,
+      },
+      {
+        path: "operacao/frutificacao",
+        Component: OperacaoFrutificacao,
       },
       {
         path: "treinamento",
