@@ -1077,6 +1077,30 @@ export async function getCameras() {
 }
 
 /**
+ * CONTROLADORES DE SALA
+ */
+export async function getControladoresSala() {
+  const { data, error } = await supabase
+    .from('controladores_sala')
+    .select('id, nome, localizacao, tipo, base_url, device_id, status, modo_padrao, relay_map, observacoes, created_at, updated_at')
+    .order('localizacao');
+
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getControladorSalaById(id: string) {
+  const { data, error } = await supabase
+    .from('controladores_sala')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+/**
  * USUÁRIOS
  */
 export async function getUsuarios(tipo?: string) {

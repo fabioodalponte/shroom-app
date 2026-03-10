@@ -4,6 +4,7 @@ Arquivo versionado:
 
 1. `sala1_mqtt_bridge.ino`
 2. `esp32_cam_capture.ino`
+3. `esp32_relay_controller.ino`
 
 ## Objetivo
 
@@ -73,6 +74,142 @@ curl -s http://IP_DA_CAMERA/health
 ```
 
 Se o `/capture` responder `200`, voce pode apontar o cloudflared para `http://IP_DA_CAMERA`.
+
+## ESP32 Relay Controller (HW-316 / Sala 1)
+
+Arquivo: `esp32_relay_controller.ino`
+
+Esse firmware expoe:
+
+1. `GET /status` - estado atual dos 4 canais
+2. `GET /health` - alias de status para checks rapidos
+3. `POST /relay` - altera um canal especifico
+4. `POST /relays` - altera varios canais de uma vez
+5. `POST /mode` - alterna `manual` ou `remote`
+6. `GET /` - pagina local simples para teste manual
+
+Payloads:
+
+```json
+POST /relay
+{
+  "relay": 4,
+  "state": true
+}
+```
+
+```json
+POST /relays
+{
+  "relay1": false,
+  "relay2": true,
+  "relay3": false,
+  "relay4": true
+}
+```
+
+```json
+POST /mode
+{
+  "mode": "remote"
+}
+```
+
+### Antes de gravar
+
+Edite no `esp32_relay_controller.ino`:
+
+1. `WIFI_SSID`
+2. `WIFI_PASSWORD`
+3. `API_TOKEN`
+4. `DEVICE_ID`
+5. `DEVICE_NAME`
+6. `RELAY_ACTIVE_LOW`
+
+### Pinos usados no firmware
+
+1. `GPIO12` - ventilador
+2. `GPIO13` - luz
+3. `GPIO14` - aquecedor
+4. `GPIO15` - umidificador
+
+Se seu modulo HW-316 tiver logica invertida, ajuste:
+
+```cpp
+const bool RELAY_ACTIVE_LOW = true;
+```
+
+para `false`.
+
+### Teste local do rele
+
+No Raspberry:
+
+```bash
+curl http://10.0.0.148/status
+curl http://10.0.0.148/health
+curl -X POST http://10.0.0.148/relay \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Token: shroombros-token-123' \
+  -d '{"relay":4,"state":true}'
+```
+
+### Tunnel Cloudflare para o rele
+
+No Raspberry, no mesmo `config.yml` do `cloudflared`:
+
+```yaml
+ingress:
+  - hostname: cam.cogumelos.net
+    service: http://10.0.0.177
+  - hostname: relay-sala1.cogumelos.net
+    service: http://10.0.0.148
+  - service: http_status:404
+```
+
+Depois:
+
+```bash
+sudo systemctl restart cloudflared
+curl https://relay-sala1.cogumelos.net/status
+```
+
+### Registro no Supabase
+
+Depois da migration `controladores_sala`, insira um registro:
+
+```sql
+insert into public.controladores_sala (
+  nome,
+  localizacao,
+  tipo,
+  base_url,
+  device_id,
+  api_token,
+  status,
+  modo_padrao,
+  relay_map,
+  observacoes
+) values (
+  'Controle Sala 1',
+  'Sala de Cultivo 1',
+  'Sala de Cultivo',
+  'https://relay-sala1.cogumelos.net',
+  'relay-controller-01',
+  'shroombros-token-123',
+  'Ativo',
+  'remote',
+  '{"relay1":"ventilador","relay2":"luz","relay3":"aquecedor","relay4":"umidificador"}'::jsonb,
+  'Controlador principal da Sala 1'
+);
+```
+
+### Arquitetura usada pelo app
+
+1. O frontend chama apenas a Supabase Function.
+2. A Function injeta `X-API-Token` e faz proxy para o rele.
+3. O browser nunca fala direto com `10.0.0.148`.
+4. Isso evita expor segredo, evita CORS/mixed content e funciona igual em localhost e producao.
 
 ## Firmware de sensores (SHT45 + SCD41)
 

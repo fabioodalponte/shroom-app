@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -18,7 +18,11 @@ import {
   Eye,
   Camera,
   RefreshCcw,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Settings2,
+  Lightbulb,
+  Flame,
+  Power
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { format } from 'date-fns';
@@ -65,6 +69,34 @@ interface CameraConfig {
   gravacao_ativa?: boolean | null;
 }
 
+interface SalaControllerConfig {
+  id: string;
+  nome: string;
+  localizacao: string;
+  tipo?: string | null;
+  status?: string | null;
+  base_url?: string | null;
+  device_id?: string | null;
+  modo_padrao?: 'manual' | 'remote' | null;
+  relay_map?: Record<string, string> | null;
+  observacoes?: string | null;
+}
+
+interface SalaControllerRelayState {
+  name: string;
+  state: boolean;
+}
+
+interface SalaControllerStatus {
+  deviceId?: string;
+  deviceName?: string;
+  mode?: 'manual' | 'remote' | string;
+  ip?: string;
+  uptimeSeconds?: number;
+  lastCommandMs?: number;
+  relays?: Record<string, SalaControllerRelayState>;
+}
+
 const CAMERA_FRAME_SIZE_OPTIONS = ['QQVGA', 'QVGA', 'CIF', 'VGA', 'SVGA', 'XGA'] as const;
 type CameraFrameSize = typeof CAMERA_FRAME_SIZE_OPTIONS[number];
 
@@ -101,6 +133,19 @@ function normalizeText(value: string) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+function scoreCameraStreamUrl(url?: string | null) {
+  const value = String(url || '').trim().toLowerCase();
+  if (!value) return -100;
+  if (value.includes('cam.cogumelos.net')) return 100;
+  if (value.includes('trycloudflare.com')) return 10;
+  if (value.startsWith('http://10.') || value.startsWith('http://192.168.') || value.startsWith('http://172.16.')) {
+    return 80;
+  }
+  if (value.startsWith('https://')) return 70;
+  if (value.startsWith('http://')) return 60;
+  return 0;
+}
+
 function formatFaseLabel(fase?: string | null) {
   const labels: Record<string, string> = {
     esterilizacao: 'Esterilização',
@@ -115,17 +160,23 @@ function formatFaseLabel(fase?: string | null) {
   return labels[fase] || fase;
 }
 
-function buildCameraImageUrl(url: string, token: number) {
+function buildCameraImageUrl(url: string, token: number, options?: { flash?: boolean }) {
   const trimmed = url.trim();
   if (!trimmed) return '';
 
   try {
     const parsed = new URL(trimmed);
     parsed.searchParams.set('t', String(token));
+    if (options?.flash) {
+      parsed.searchParams.set('flash', '1');
+    } else {
+      parsed.searchParams.delete('flash');
+    }
     return parsed.toString();
   } catch {
     const separator = trimmed.includes('?') ? '&' : '?';
-    return `${trimmed}${separator}t=${token}`;
+    const flashSuffix = options?.flash ? '&flash=1' : '';
+    return `${trimmed}${separator}t=${token}${flashSuffix}`;
   }
 }
 
@@ -191,9 +242,40 @@ function buildCameraFlashUrl(streamUrl: string, command: 'on' | 'off') {
   );
 }
 
+function normalizeRelayKey(value: string) {
+  const match = value.match(/^relay(\d+)$/i);
+  if (!match) return value;
+  return `relay${match[1]}`;
+}
+
+function relayOrder(key: string) {
+  const match = key.match(/^relay(\d+)$/i);
+  return match ? Number.parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER;
+}
+
+function getRelayDisplayName(key: string, controller?: SalaControllerConfig | null, status?: SalaControllerStatus | null) {
+  const normalizedKey = normalizeRelayKey(key);
+  const statusName = status?.relays?.[normalizedKey]?.name;
+  if (statusName) return statusName;
+
+  const relayMapValue = controller?.relay_map?.[normalizedKey];
+  if (relayMapValue) return relayMapValue;
+
+  return normalizedKey;
+}
+
+function getRelayIcon(relayName: string) {
+  const normalized = normalizeText(relayName);
+  if (normalized.includes('umid')) return Droplets;
+  if (normalized.includes('aquec')) return Flame;
+  if (normalized.includes('luz')) return Lightbulb;
+  return Wind;
+}
+
 export function Seguranca() {
   const [lotes, setLotes] = useState<LoteMonitoramento[]>([]);
   const [cameras, setCameras] = useState<CameraConfig[]>([]);
+  const [controladoresSala, setControladoresSala] = useState<SalaControllerConfig[]>([]);
   const [loteSelecionado, setLoteSelecionado] = useState<string>('todos');
   const [periodoHistorico, setPeriodoHistorico] = useState<'24h' | '7d'>('24h');
   const [loading, setLoading] = useState(true);
@@ -201,6 +283,7 @@ export function Seguranca() {
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
   const [cameraSelecionada, setCameraSelecionada] = useState<CameraConfig | null>(null);
   const [cameraFrameToken, setCameraFrameToken] = useState(Date.now());
+  const [cameraFrameWithFlash, setCameraFrameWithFlash] = useState(false);
   const [cameraErroCarregamento, setCameraErroCarregamento] = useState<string | null>(null);
   const [autoAtualizarCamera, setAutoAtualizarCamera] = useState(false);
   const [cameraFlashComando, setCameraFlashComando] = useState<'on' | 'off' | null>(null);
@@ -213,6 +296,13 @@ export function Seguranca() {
   const [cameraControlsSaving, setCameraControlsSaving] = useState(false);
   const [cameraControlsInfo, setCameraControlsInfo] = useState<string | null>(null);
   const [cameraControlsErro, setCameraControlsErro] = useState<string | null>(null);
+  const [controladorDialogOpen, setControladorDialogOpen] = useState(false);
+  const [controladorSelecionado, setControladorSelecionado] = useState<SalaControllerConfig | null>(null);
+  const [controladorStatus, setControladorStatus] = useState<SalaControllerStatus | null>(null);
+  const [controladorLoading, setControladorLoading] = useState(false);
+  const [controladorComando, setControladorComando] = useState<string | null>(null);
+  const [controladorInfo, setControladorInfo] = useState<string | null>(null);
+  const [controladorErro, setControladorErro] = useState<string | null>(null);
 
   const carregarDados = useCallback(async () => {
     setLoading(true);
@@ -220,9 +310,10 @@ export function Seguranca() {
 
     try {
       const hours = periodoHistorico === '24h' ? 24 : 168;
-      const [sensoresResult, camerasResult] = await Promise.allSettled([
+      const [sensoresResult, camerasResult, controladoresResult] = await Promise.allSettled([
         fetchServer(`/sensores/latest?hours=${hours}`),
         fetchServer('/cameras'),
+        fetchServer('/controladores'),
       ]);
 
       if (sensoresResult.status === 'rejected') {
@@ -238,11 +329,19 @@ export function Seguranca() {
         console.warn('Não foi possível carregar câmeras:', camerasResult.reason);
         setCameras([]);
       }
+
+      if (controladoresResult.status === 'fulfilled') {
+        setControladoresSala((controladoresResult.value.controladores || []) as SalaControllerConfig[]);
+      } else {
+        console.warn('Não foi possível carregar controladores de sala:', controladoresResult.reason);
+        setControladoresSala([]);
+      }
     } catch (error: any) {
       console.error('Erro ao carregar monitoramento de sensores:', error);
       setErrorMessage(error.message || 'Erro ao carregar sensores');
       setLotes([]);
       setCameras([]);
+      setControladoresSala([]);
     } finally {
       setLoading(false);
     }
@@ -263,6 +362,7 @@ export function Seguranca() {
     if (!cameraDialogOpen || !autoAtualizarCamera || !cameraSelecionada?.url_stream) return;
 
     const timerId = window.setInterval(() => {
+      setCameraFrameWithFlash(false);
       setCameraFrameToken(Date.now());
     }, 8000);
 
@@ -287,7 +387,9 @@ export function Seguranca() {
 
     const camerasAtivas = cameras.filter((camera) => normalizeText(String(camera.status || 'ativa')) !== 'inativa');
     const base = camerasAtivas.length ? camerasAtivas : cameras;
-    const baseComStream = base.filter(hasCameraStream);
+    const baseComStream = [...base.filter(hasCameraStream)].sort(
+      (a, b) => scoreCameraStreamUrl(b.url_stream) - scoreCameraStreamUrl(a.url_stream),
+    );
     const universoBusca = baseComStream.length ? baseComStream : base;
 
     const sala = normalizeText(lote.sala || '');
@@ -320,10 +422,169 @@ export function Seguranca() {
     return fallbackComStream;
   }, [cameras]);
 
+  const getControladorForLote = useCallback((lote: LoteMonitoramento) => {
+    if (!controladoresSala.length) return null;
+
+    const controladoresAtivos = controladoresSala.filter(
+      (controlador) => normalizeText(String(controlador.status || 'ativo')) !== 'inativo',
+    );
+    const base = controladoresAtivos.length ? controladoresAtivos : controladoresSala;
+
+    const sala = normalizeText(lote.sala || '');
+    const codigo = normalizeText(lote.codigo_lote || '');
+
+    const encontrado = base.find((controlador) => {
+      const nome = normalizeText(controlador.nome || '');
+      const localizacao = normalizeText(controlador.localizacao || '');
+
+      const matchSala =
+        !!sala &&
+        (nome.includes(sala) ||
+          localizacao.includes(sala) ||
+          sala.includes(nome) ||
+          sala.includes(localizacao));
+
+      const matchCodigo = !!codigo && (nome.includes(codigo) || localizacao.includes(codigo));
+      return matchSala || matchCodigo;
+    });
+
+    return encontrado || base[0] || null;
+  }, [controladoresSala]);
+
+  const carregarStatusControladorSala = useCallback(async (controladorId: string, options?: { silent?: boolean }) => {
+    if (!controladorId) return;
+
+    setControladorLoading(true);
+    if (!options?.silent) {
+      setControladorInfo(null);
+    }
+    setControladorErro(null);
+
+    try {
+      const result = await fetchServer(`/controladores/${controladorId}/status`);
+      setControladorStatus((result.status || null) as SalaControllerStatus | null);
+      if (result.controlador) {
+        setControladorSelecionado((result.controlador || null) as SalaControllerConfig | null);
+      }
+      if (!options?.silent) {
+        setControladorInfo('Status do controlador atualizado.');
+      }
+    } catch (error: any) {
+      setControladorErro(error.message || 'Erro ao consultar controlador da sala');
+    } finally {
+      setControladorLoading(false);
+    }
+  }, []);
+
+  const abrirControleDaSala = useCallback((lote: LoteMonitoramento) => {
+    const controlador = getControladorForLote(lote);
+    if (!controlador) return;
+
+    setControladorSelecionado(controlador);
+    setControladorStatus(null);
+    setControladorInfo(null);
+    setControladorErro(null);
+    setControladorComando(null);
+    setControladorDialogOpen(true);
+    void carregarStatusControladorSala(controlador.id);
+  }, [carregarStatusControladorSala, getControladorForLote]);
+
+  const alterarModoControladorSala = useCallback(async (mode: 'manual' | 'remote') => {
+    if (!controladorSelecionado?.id) return;
+
+    setControladorComando(`mode:${mode}`);
+    setControladorInfo(null);
+    setControladorErro(null);
+
+    try {
+      const result = await fetchServer(`/controladores/${controladorSelecionado.id}/mode`, {
+        method: 'POST',
+        body: JSON.stringify({ mode }),
+      });
+
+      setControladorStatus((result.status || null) as SalaControllerStatus | null);
+      setControladorInfo(`Modo ${mode} aplicado com sucesso.`);
+    } catch (error: any) {
+      setControladorErro(error.message || 'Erro ao alterar modo do controlador');
+    } finally {
+      setControladorComando(null);
+    }
+  }, [controladorSelecionado?.id]);
+
+  const controlarRelaySala = useCallback(async (relayKey: string, state: boolean) => {
+    if (!controladorSelecionado?.id) return;
+
+    const relay = relayOrder(relayKey);
+    if (!Number.isFinite(relay) || relay < 1 || relay > 4) return;
+
+    setControladorComando(`${relayKey}:${state ? 'on' : 'off'}`);
+    setControladorInfo(null);
+    setControladorErro(null);
+
+    try {
+      const result = await fetchServer(`/controladores/${controladorSelecionado.id}/relay`, {
+        method: 'POST',
+        body: JSON.stringify({ relay, state }),
+      });
+
+      setControladorStatus((result.status || null) as SalaControllerStatus | null);
+      setControladorInfo(`${getRelayDisplayName(relayKey, controladorSelecionado, result.status)} ${state ? 'ligado' : 'desligado'}.`);
+    } catch (error: any) {
+      setControladorErro(error.message || 'Erro ao acionar relé');
+    } finally {
+      setControladorComando(null);
+    }
+  }, [controladorSelecionado]);
+
+  const controlarTodosRelaysSala = useCallback(async (state: boolean) => {
+    if (!controladorSelecionado?.id) return;
+
+    const relayKeys = Object.keys(controladorStatus?.relays || controladorSelecionado?.relay_map || {
+      relay1: true,
+      relay2: true,
+      relay3: true,
+      relay4: true,
+    });
+
+    const payload = relayKeys.reduce<Record<string, boolean>>((acc, relayKey) => {
+      acc[normalizeRelayKey(relayKey)] = state;
+      return acc;
+    }, {});
+
+    setControladorComando(state ? 'all:on' : 'all:off');
+    setControladorInfo(null);
+    setControladorErro(null);
+
+    try {
+      const result = await fetchServer(`/controladores/${controladorSelecionado.id}/relays`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      setControladorStatus((result.status || null) as SalaControllerStatus | null);
+      setControladorInfo(state ? 'Todos os canais foram ligados.' : 'Todos os canais foram desligados.');
+    } catch (error: any) {
+      setControladorErro(error.message || 'Erro ao atualizar todos os relés');
+    } finally {
+      setControladorComando(null);
+    }
+  }, [controladorSelecionado, controladorStatus?.relays]);
+
+  useEffect(() => {
+    if (!controladorDialogOpen || !controladorSelecionado?.id) return;
+
+    const timerId = window.setInterval(() => {
+      void carregarStatusControladorSala(controladorSelecionado.id, { silent: true });
+    }, 15000);
+
+    return () => window.clearInterval(timerId);
+  }, [carregarStatusControladorSala, controladorDialogOpen, controladorSelecionado?.id]);
+
   const abrirCameraDoLote = useCallback((lote: LoteMonitoramento) => {
     const camera = getCameraForLote(lote);
     setCameraSelecionada(camera);
     setCameraErroCarregamento(null);
+    setCameraFrameWithFlash(false);
     setCameraFrameToken(Date.now());
     setAutoAtualizarCamera(false);
     setCameraFlashInfo(null);
@@ -460,10 +721,12 @@ export function Seguranca() {
         const autoOffInfo = Number.isFinite(autoOffMs) && autoOffMs > 0
           ? ` Auto-off em ${Math.round(autoOffMs / 1000)}s.`
           : '';
-        setCameraFlashInfo(`Luz ligada.${autoOffInfo}`);
+        setCameraFlashInfo(`Luz ligada e frame com flash solicitado.${autoOffInfo}`);
+        setCameraFrameWithFlash(true);
         setCameraFrameToken(Date.now());
       } else {
         setCameraFlashInfo('Luz desligada.');
+        setCameraFrameWithFlash(false);
       }
     } catch (error: any) {
       setCameraFlashErro(`Falha ao controlar luz: ${error?.message || 'erro desconhecido'}`);
@@ -484,6 +747,7 @@ export function Seguranca() {
       setAutoAtualizarCamera(false);
       setCameraErroCarregamento(null);
       setCameraSelecionada(null);
+      setCameraFrameWithFlash(false);
       setCameraFlashComando(null);
       setCameraFlashInfo(null);
       setCameraFlashErro(null);
@@ -502,6 +766,42 @@ export function Seguranca() {
       setCameraControlsErro(null);
     }
   }, []);
+
+  const handleControladorDialogChange = useCallback((open: boolean) => {
+    setControladorDialogOpen(open);
+
+    if (!open) {
+      setControladorSelecionado(null);
+      setControladorStatus(null);
+      setControladorLoading(false);
+      setControladorComando(null);
+      setControladorInfo(null);
+      setControladorErro(null);
+    }
+  }, []);
+
+  const controladorRelayEntries = useMemo(() => {
+    const fallbackKeys = ['relay1', 'relay2', 'relay3', 'relay4'];
+    const relayKeys = Array.from(new Set([
+      ...Object.keys(controladorSelecionado?.relay_map || {}),
+      ...Object.keys(controladorStatus?.relays || {}),
+      ...fallbackKeys,
+    ])).sort((a, b) => relayOrder(a) - relayOrder(b));
+
+    return relayKeys.map((relayKey) => {
+      const normalizedKey = normalizeRelayKey(relayKey);
+      const relayState = Boolean(controladorStatus?.relays?.[normalizedKey]?.state);
+      const relayName = getRelayDisplayName(normalizedKey, controladorSelecionado, controladorStatus);
+
+      return {
+        key: normalizedKey,
+        relayNumber: relayOrder(normalizedKey),
+        name: relayName,
+        state: relayState,
+        icon: getRelayIcon(relayName),
+      };
+    });
+  }, [controladorSelecionado, controladorStatus]);
 
   const lotesFiltrados = loteSelecionado === 'todos' 
     ? lotes 
@@ -661,6 +961,7 @@ export function Seguranca() {
 	        const tendUmid = getTendencia(lote.sensor_atual.umidade, 85, 5);
 	        const tendCo2 = getTendencia(lote.sensor_atual.co2, 1000, 200);
           const cameraLote = getCameraForLote(lote);
+          const controladorLote = getControladorForLote(lote);
 
 	        return (
 	          <Card key={lote.id} className={`border-l-4 ${risco.border}`}>
@@ -683,6 +984,15 @@ export function Seguranca() {
                   </CardTitle>
                 </div>
 	                <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => abrirControleDaSala(lote)}
+                      disabled={!controladorLote}
+                    >
+                      <Settings2 className="w-4 h-4 mr-2" />
+                      {controladorLote ? 'Controle da Sala' : 'Sem Controle'}
+                    </Button>
                     <Button
                       variant="outline"
                       size="sm"
@@ -885,9 +1195,174 @@ export function Seguranca() {
 	          <p><strong>SCD41:</strong> Sensor NDIR de CO₂ para monitoramento contínuo da sala</p>
 	          <p><strong>Origem dos dados:</strong> ESP32 WROOM enviando leituras para o endpoint de ingestão</p>
 	          <p><strong>Câmeras conectadas:</strong> {cameras.length} cadastrada(s) na API</p>
+	          <p><strong>Controladores de sala:</strong> {controladoresSala.length} cadastrado(s) na API</p>
 	          <p><strong>Persistência:</strong> Leituras gravadas em `leituras_sensores` para histórico e análise</p>
 	        </CardContent>
 	      </Card>
+
+      <Dialog open={controladorDialogOpen} onOpenChange={handleControladorDialogChange}>
+        <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[90dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings2 className="w-5 h-5" />
+              {controladorSelecionado?.nome || 'Controle da Sala'}
+            </DialogTitle>
+            <DialogDescription>
+              {controladorSelecionado
+                ? `${controladorSelecionado.localizacao} • ${controladorSelecionado.status || 'Status não informado'}`
+                : 'Associe um controlador à sala para operar ventilação, luz, aquecimento e umidificação.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {controladorSelecionado ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-gray-500">Modo</p>
+                    <p className="mt-1 text-lg font-semibold capitalize">
+                      {controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote'}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-gray-500">IP do dispositivo</p>
+                    <p className="mt-1 text-sm font-medium break-all">
+                      {controladorStatus?.ip || 'Aguardando status'}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-gray-500">Uptime</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {typeof controladorStatus?.uptimeSeconds === 'number'
+                        ? `${Math.floor(controladorStatus.uptimeSeconds / 60)} min`
+                        : '--'}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <p className="text-xs text-gray-500">Endpoint</p>
+                    <p className="mt-1 text-sm font-medium break-all">
+                      {controladorSelecionado.base_url || 'Não configurado'}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => void carregarStatusControladorSala(controladorSelecionado.id)}
+                  disabled={controladorLoading || !!controladorComando}
+                >
+                  <RefreshCcw className="mr-2 h-4 w-4" />
+                  {controladorLoading ? 'Atualizando...' : 'Atualizar status'}
+                </Button>
+                <Button
+                  variant={(controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote') === 'remote' ? 'default' : 'outline'}
+                  onClick={() => void alterarModoControladorSala('remote')}
+                  disabled={!!controladorComando}
+                >
+                  Modo Remote
+                </Button>
+                <Button
+                  variant={(controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote') === 'manual' ? 'default' : 'outline'}
+                  onClick={() => void alterarModoControladorSala('manual')}
+                  disabled={!!controladorComando}
+                >
+                  Modo Manual
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void controlarTodosRelaysSala(true)}
+                  disabled={!!controladorComando}
+                >
+                  Ligar todos
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void controlarTodosRelaysSala(false)}
+                  disabled={!!controladorComando}
+                >
+                  Desligar todos
+                </Button>
+                <DialogClose asChild>
+                  <Button variant="outline">Fechar</Button>
+                </DialogClose>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {controladorRelayEntries.map((relay) => {
+                  const Icon = relay.icon;
+                  const isRunning = controladorComando === `${relay.key}:on` || controladorComando === `${relay.key}:off`;
+
+                  return (
+                    <Card key={relay.key} className={relay.state ? 'border-green-200 bg-green-50' : 'border-gray-200'}>
+                      <CardContent className="p-4 space-y-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className={`rounded-full p-2 ${relay.state ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                              <Icon className="h-5 w-5" />
+                            </div>
+                            <div>
+                              <p className="text-sm text-gray-500">Canal {relay.relayNumber}</p>
+                              <p className="font-semibold capitalize">{relay.name}</p>
+                            </div>
+                          </div>
+                          <Badge className={relay.state ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}>
+                            {relay.state ? 'Ligado' : 'Desligado'}
+                          </Badge>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button
+                            className="flex-1"
+                            variant={relay.state ? 'outline' : 'default'}
+                            onClick={() => void controlarRelaySala(relay.key, true)}
+                            disabled={!!controladorComando}
+                          >
+                            {isRunning && controladorComando?.endsWith(':on') ? 'Ligando...' : 'Ligar'}
+                          </Button>
+                          <Button
+                            className="flex-1"
+                            variant={relay.state ? 'destructive' : 'outline'}
+                            onClick={() => void controlarRelaySala(relay.key, false)}
+                            disabled={!!controladorComando}
+                          >
+                            {isRunning && controladorComando?.endsWith(':off') ? 'Desligando...' : 'Desligar'}
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+
+              {controladorInfo && (
+                <p className="text-xs text-green-700">{controladorInfo}</p>
+              )}
+              {controladorErro && (
+                <p className="text-xs text-red-600">{controladorErro}</p>
+              )}
+
+              <div className="rounded-lg border border-dashed p-3 text-xs text-gray-600 space-y-1">
+                <p className="flex items-center gap-2"><Power className="h-4 w-4" /> O app não chama o ESP direto; os comandos passam pela Supabase Function.</p>
+                <p>Isso preserva o token do controlador, evita CORS/mixed content e mantém o acesso funcionando em produção.</p>
+              </div>
+            </div>
+          ) : (
+            <Card className="border-dashed">
+              <CardContent className="py-8 text-center text-sm text-gray-600">
+                Nenhum controlador de sala encontrado para este lote.
+              </CardContent>
+            </Card>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={cameraDialogOpen} onOpenChange={handleCameraDialogChange}>
         <DialogContent className="w-[95vw] sm:max-w-5xl max-h-[90dvh] overflow-y-auto">
@@ -912,7 +1387,9 @@ export function Seguranca() {
                   </div>
                 ) : (
                   <img
-                    src={buildCameraImageUrl(cameraSelecionada.url_stream, cameraFrameToken)}
+                    src={buildCameraImageUrl(cameraSelecionada.url_stream, cameraFrameToken, {
+                      flash: cameraFrameWithFlash,
+                    })}
                     alt={`Feed da ${cameraSelecionada.nome}`}
                     className="max-h-[65dvh] w-full select-none object-contain"
                     draggable={false}
@@ -925,7 +1402,13 @@ export function Seguranca() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => setCameraFrameToken(Date.now())}>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setCameraFrameWithFlash(false);
+                    setCameraFrameToken(Date.now());
+                  }}
+                >
                   <RefreshCcw className="mr-2 h-4 w-4" />
                   Atualizar frame
                 </Button>
@@ -966,6 +1449,12 @@ export function Seguranca() {
               )}
               {cameraFlashErro && (
                 <p className="text-xs text-red-600">{cameraFlashErro}</p>
+              )}
+
+              {cameraSelecionada?.url_stream && (
+                <p className="text-xs text-gray-500 break-all">
+                  URL ativa: {cameraSelecionada.url_stream}
+                </p>
               )}
 
               <p className="text-xs text-gray-500">

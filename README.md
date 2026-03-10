@@ -8,7 +8,7 @@ This is a code bundle for Shroom - App Management. The original project is avail
 - Camera + Cloudflare Tunnel setup: `src/SETUP-CAMERA-CLOUDFLARE.md`
 - Coolify deploy + domain: `DEPLOY-COOLIFY.md`
 - Raspberry MQTT bridge setup: `raspberry/README.md`
-- ESP32 firmware (sala 1): `raspberry/esp32/README.md`
+- ESP32 firmware (sensores, camera e rele): `raspberry/esp32/README.md`
 
 ## Running the code
 

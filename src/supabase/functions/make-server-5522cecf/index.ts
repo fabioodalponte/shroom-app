@@ -8,6 +8,81 @@ import * as comprasKV from "./compras-kv.tsx";
 const app = new Hono();
 const isAdminUser = (user: any) => String(user?.tipo_usuario || '').toLowerCase() === 'admin';
 const SENSOR_INGEST_HEADER = 'x-sensores-key';
+const CONTROLADOR_REQUEST_TIMEOUT_MS = 8000;
+
+function normalizeBaseUrl(value: unknown) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function getRelayProxyHeaders(apiToken?: string | null) {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (apiToken) {
+    headers['X-API-Token'] = apiToken;
+  }
+
+  return headers;
+}
+
+async function parseProxyResponse(response: Response) {
+  const raw = await response.text();
+  if (!raw) return {};
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { raw };
+  }
+}
+
+function toPublicControlador(controlador: any) {
+  if (!controlador) return null;
+  const { api_token, ...rest } = controlador;
+  return rest;
+}
+
+async function callControladorSala(
+  controlador: any,
+  endpoint: string,
+  init: RequestInit = {},
+) {
+  const baseUrl = normalizeBaseUrl(controlador?.base_url);
+  if (!baseUrl) {
+    throw new Error('Controlador sem base_url configurada');
+  }
+
+  const url = `${baseUrl}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CONTROLADOR_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        ...getRelayProxyHeaders(controlador?.api_token),
+        ...(init.headers || {}),
+      },
+    });
+
+    const payload = await parseProxyResponse(response);
+    if (!response.ok) {
+      const detail = payload?.error || payload?.message || payload?.raw || `HTTP ${response.status}`;
+      throw new Error(detail);
+    }
+
+    return payload;
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new Error('Tempo limite excedido ao conectar com o controlador da sala');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 function parseNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -1061,6 +1136,153 @@ app.get("/make-server-5522cecf/cameras", async (c) => {
   } catch (error) {
     console.error('Erro ao buscar câmeras:', error);
     return c.json({ error: error.message }, 500);
+  }
+});
+
+// ============================================
+// CONTROLADORES DE SALA
+// ============================================
+
+app.get("/make-server-5522cecf/controladores", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const controladores = await db.getControladoresSala();
+    return c.json({ controladores });
+  } catch (error) {
+    console.error('Erro ao buscar controladores de sala:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.get("/make-server-5522cecf/controladores/:id/status", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const controlador = await db.getControladorSalaById(c.req.param('id'));
+    if (!controlador) {
+      return c.json({ error: 'Controlador não encontrado' }, 404);
+    }
+
+    const status = await callControladorSala(controlador, '/status', { method: 'GET' });
+    return c.json({
+      controlador: toPublicControlador(controlador),
+      status,
+    });
+  } catch (error) {
+    console.error('Erro ao consultar status do controlador:', error);
+    return c.json({ error: error.message || 'Erro ao consultar controlador' }, 502);
+  }
+});
+
+app.post("/make-server-5522cecf/controladores/:id/relay", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const controlador = await db.getControladorSalaById(c.req.param('id'));
+    if (!controlador) {
+      return c.json({ error: 'Controlador não encontrado' }, 404);
+    }
+
+    const body = await c.req.json();
+    const relay = Number(body?.relay);
+    const state = body?.state;
+
+    if (![1, 2, 3, 4].includes(relay)) {
+      return c.json({ error: 'relay deve ser 1..4' }, 400);
+    }
+
+    if (typeof state !== 'boolean') {
+      return c.json({ error: 'state deve ser boolean' }, 400);
+    }
+
+    const status = await callControladorSala(controlador, '/relay', {
+      method: 'POST',
+      body: JSON.stringify({ relay, state }),
+    });
+
+    return c.json({
+      controlador: toPublicControlador(controlador),
+      status,
+    });
+  } catch (error) {
+    console.error('Erro ao acionar relé do controlador:', error);
+    return c.json({ error: error.message || 'Erro ao acionar relé' }, 502);
+  }
+});
+
+app.post("/make-server-5522cecf/controladores/:id/relays", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const controlador = await db.getControladorSalaById(c.req.param('id'));
+    if (!controlador) {
+      return c.json({ error: 'Controlador não encontrado' }, 404);
+    }
+
+    const body = await c.req.json();
+    const payload: Record<string, boolean> = {};
+
+    for (const key of ['relay1', 'relay2', 'relay3', 'relay4']) {
+      if (key in body) {
+        if (typeof body[key] !== 'boolean') {
+          return c.json({ error: `${key} deve ser boolean` }, 400);
+        }
+        payload[key] = body[key];
+      }
+    }
+
+    if (!Object.keys(payload).length) {
+      return c.json({ error: 'Informe pelo menos um relay para atualizar' }, 400);
+    }
+
+    const status = await callControladorSala(controlador, '/relays', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+
+    return c.json({
+      controlador: toPublicControlador(controlador),
+      status,
+    });
+  } catch (error) {
+    console.error('Erro ao atualizar múltiplos relés do controlador:', error);
+    return c.json({ error: error.message || 'Erro ao atualizar relés' }, 502);
+  }
+});
+
+app.post("/make-server-5522cecf/controladores/:id/mode", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const controlador = await db.getControladorSalaById(c.req.param('id'));
+    if (!controlador) {
+      return c.json({ error: 'Controlador não encontrado' }, 404);
+    }
+
+    const body = await c.req.json();
+    const mode = String(body?.mode || '').trim().toLowerCase();
+    if (mode !== 'manual' && mode !== 'remote') {
+      return c.json({ error: 'mode deve ser manual ou remote' }, 400);
+    }
+
+    const status = await callControladorSala(controlador, '/mode', {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    });
+
+    return c.json({
+      controlador: toPublicControlador(controlador),
+      status,
+    });
+  } catch (error) {
+    console.error('Erro ao alterar modo do controlador:', error);
+    return c.json({ error: error.message || 'Erro ao alterar modo do controlador' }, 502);
   }
 });
 

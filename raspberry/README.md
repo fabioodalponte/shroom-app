@@ -21,7 +21,7 @@ Bridge para consumir mensagens MQTT com sensores e enviar para:
 4. `systemd/shroom-mqtt-bridge.service` - template de unit file.
 5. `scripts/install_service.sh` - instala venv + service.
 6. `scripts/check_bridge.sh` - checks rapidos de operacao.
-7. `esp32/` - firmware versionado para ESP32 (sala 1).
+7. `esp32/` - firmware versionado para ESP32 (sensores, camera e controlador de rele).
 
 ## Pre-requisitos no Raspberry
 

@@ -188,7 +188,26 @@ CREATE TABLE IF NOT EXISTS cameras (
 );
 
 -- ============================================
--- 11. TABELA FINANCEIRO
+-- 11. TABELA DE CONTROLADORES DE SALA
+-- ============================================
+CREATE TABLE IF NOT EXISTS controladores_sala (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  nome VARCHAR(120) NOT NULL,
+  localizacao VARCHAR(120) NOT NULL,
+  tipo VARCHAR(50) NOT NULL DEFAULT 'Sala de Cultivo',
+  base_url TEXT NOT NULL,
+  device_id VARCHAR(120),
+  api_token TEXT,
+  status VARCHAR(20) DEFAULT 'Ativo' CHECK (status IN ('Ativo', 'Inativo', 'Manutenção')),
+  modo_padrao VARCHAR(20) DEFAULT 'remote' CHECK (modo_padrao IN ('manual', 'remote')),
+  relay_map JSONB NOT NULL DEFAULT '{"relay1":"ventilador","relay2":"luz","relay3":"aquecedor","relay4":"umidificador"}'::jsonb,
+  observacoes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ============================================
+-- 12. TABELA FINANCEIRO
 -- ============================================
 CREATE TABLE IF NOT EXISTS financeiro (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -207,7 +226,7 @@ CREATE TABLE IF NOT EXISTS financeiro (
 );
 
 -- ============================================
--- 12. TABELA DE SENSORES IOT (Opcional)
+-- 13. TABELA DE SENSORES IOT (Opcional)
 -- ============================================
 CREATE TABLE IF NOT EXISTS leituras_sensores (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -230,6 +249,8 @@ CREATE INDEX IF NOT EXISTS idx_colheitas_lote ON colheitas(lote_id);
 CREATE INDEX IF NOT EXISTS idx_estoque_produto ON estoque(produto_id);
 CREATE INDEX IF NOT EXISTS idx_entregas_motorista ON entregas(motorista_id);
 CREATE INDEX IF NOT EXISTS idx_financeiro_data ON financeiro(data_transacao);
+CREATE INDEX IF NOT EXISTS idx_controladores_sala_localizacao ON controladores_sala(localizacao);
+CREATE INDEX IF NOT EXISTS idx_controladores_sala_status ON controladores_sala(status);
 
 -- ============================================
 -- TRIGGERS PARA UPDATED_AT
@@ -260,6 +281,9 @@ CREATE TRIGGER update_estoque_updated_at BEFORE UPDATE ON estoque
 CREATE TRIGGER update_pedidos_updated_at BEFORE UPDATE ON pedidos
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_controladores_sala_updated_at BEFORE UPDATE ON controladores_sala
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- ============================================
 -- POLÍTICAS DE SEGURANÇA (RLS)
 -- ============================================
@@ -275,6 +299,7 @@ ALTER TABLE pedidos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE itens_pedido ENABLE ROW LEVEL SECURITY;
 ALTER TABLE entregas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cameras ENABLE ROW LEVEL SECURITY;
+ALTER TABLE controladores_sala ENABLE ROW LEVEL SECURITY;
 ALTER TABLE financeiro ENABLE ROW LEVEL SECURITY;
 
 -- Política: Usuários autenticados podem ver todos os registros
@@ -297,6 +322,9 @@ CREATE POLICY "Usuários autenticados podem ver estoque" ON estoque
     FOR SELECT TO authenticated USING (true);
 
 CREATE POLICY "Usuários autenticados podem ver pedidos" ON pedidos
+    FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Usuários autenticados podem ver controladores_sala" ON controladores_sala
     FOR SELECT TO authenticated USING (true);
 
 CREATE POLICY "Usuários autenticados podem ver itens" ON itens_pedido
