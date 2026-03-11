@@ -5,7 +5,9 @@
   "capture": {
     "camera_name": "camera-sala-1",
     "camera_url": "https://cam.cogumelos.net/capture",
-    "request_timeout_seconds": 10,
+    "request_timeout_seconds": 15,
+    "request_retries": 3,
+    "retry_backoff_seconds": 1.0,
     "verify_tls": true
   },
   "inference": {

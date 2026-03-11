@@ -72,7 +72,8 @@ O primeiro corte da captura faz:
 2. `GET` simples para o endpoint de snapshot da ESP32-CAM
 3. salvamento local da imagem em pasta organizada por data
 4. criacao de metadata JSON ao lado da imagem
-5. logs de sucesso e erro em `vision/logs/vision.log`
+5. retries com backoff curto para falhas intermitentes de rede
+6. logs de sucesso e erro em `vision/logs/vision.log`
 
 Se a camera falhar, o runner retorna um payload estruturado com `status= capture_failed`
 ou `status= pipeline_capture_failed`, em vez de derrubar o processo com traceback.
@@ -241,6 +242,24 @@ Se o ambiente local nao confiar na cadeia TLS do dominio da camera e aparecer
 ```
 
 Use isso apenas em ambiente controlado.
+
+Configuracao recomendada para a captura:
+
+```json
+"capture": {
+  "camera_url": "https://cam.cogumelos.net/capture",
+  "request_timeout_seconds": 15,
+  "request_retries": 3,
+  "retry_backoff_seconds": 1.0,
+  "verify_tls": true
+}
+```
+
+Comportamento:
+
+1. cada tentativa e logada separadamente
+2. falhas intermitentes nao derrubam o pipeline na primeira tentativa
+3. se todas as tentativas falharem, o erro final consolida os motivos por tentativa
 
 ## Saidas esperadas
 
