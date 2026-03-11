@@ -11,7 +11,7 @@ from typing import Any
 
 from .capture.esp32_cam_capture import ESP32CamCaptureClient, capture_snapshot_safe
 from .config.loader import load_vision_config
-from .hardware.light_control import turn_light_off, turn_light_on
+from .hardware.light_control import LightControlError, turn_light_off, turn_light_on
 from .inference.pipeline import VisionInferencePipeline
 from .logging_utils import get_vision_logger
 from .storage.artifact_store import ArtifactStore
@@ -41,6 +41,14 @@ class VisionOrchestrator:
             "capture_retries": self.config.get("capture", {}).get("request_retries", 3),
             "capture_retry_backoff_seconds": self.config.get("capture", {}).get("retry_backoff_seconds", 1.0),
             "lighting_enabled": self.config.get("lighting", {}).get("enabled", True),
+            "lighting_provider": self.config.get("lighting", {}).get("provider", "relay_http"),
+            "lighting_base_url": self.config.get("lighting", {}).get("base_url"),
+            "lighting_relay_channel": self.config.get("lighting", {}).get("relay_channel", 2),
+            "lighting_timeout_seconds": self.config.get("lighting", {}).get("request_timeout_seconds", 5),
+            "lighting_retries": self.config.get("lighting", {}).get("request_retries", 2),
+            "lighting_retry_backoff_seconds": self.config.get("lighting", {}).get("retry_backoff_seconds", 0.5),
+            "lighting_verify_state": self.config.get("lighting", {}).get("verify_state", True),
+            "lighting_verify_state_strict": self.config.get("lighting", {}).get("verify_state_strict", False),
             "lighting_warmup_seconds": self.config.get("lighting", {}).get("warmup_seconds", 8),
             "lighting_cooldown_seconds": self.config.get("lighting", {}).get("cooldown_seconds", 1),
             "artifacts_dir": str(self.artifact_store.artifacts_dir),
@@ -209,13 +217,39 @@ class VisionOrchestrator:
         cooldown_seconds = max(0.0, float(lighting_config.get("cooldown_seconds", 1)))
 
         light_on_attempted = False
+        light_on_ok: bool | None = None
+        light_off_attempted = False
+        light_off_ok: bool | None = None
+        light_off_error: str | None = None
         result: dict[str, Any] | None = None
 
         try:
             self.logger.info("vision capture_pipeline_start mode=scheduled_capture")
             if lighting_enabled:
                 light_on_attempted = True
-                turn_light_on(self.config, self.logger)
+                try:
+                    turn_light_on(self.config, self.logger)
+                    light_on_ok = True
+                except LightControlError as exc:
+                    light_on_ok = False
+                    self.logger.error("vision scheduled_capture_aborted stage=light_on error=%s", exc)
+                    result = {
+                        "status": "scheduled_capture_aborted",
+                        "stage": "light_on",
+                        "error": str(exc),
+                        "execution_mode": "scheduled_capture",
+                        "lighting": {
+                            "enabled": lighting_enabled,
+                            "warmup_seconds": warmup_seconds,
+                            "cooldown_seconds": cooldown_seconds,
+                            "light_on_attempted": light_on_attempted,
+                            "light_on_ok": light_on_ok,
+                            "light_off_attempted": False,
+                            "light_off_ok": None,
+                            "light_off_error": None,
+                        },
+                    }
+                    return result
                 self.logger.info("vision waiting_for_light seconds=%s", warmup_seconds)
                 if warmup_seconds > 0:
                     time.sleep(warmup_seconds)
@@ -229,17 +263,39 @@ class VisionOrchestrator:
                 "warmup_seconds": warmup_seconds,
                 "cooldown_seconds": cooldown_seconds,
                 "light_on_attempted": light_on_attempted,
-                "light_off_attempted": False,
+                "light_on_ok": light_on_ok,
+                "light_off_attempted": light_off_attempted,
+                "light_off_ok": light_off_ok,
+                "light_off_error": light_off_error,
             }
             return result
         finally:
-            if lighting_enabled:
-                turn_light_off(self.config, self.logger)
-                if result is not None:
-                    result["lighting"]["light_off_attempted"] = True
+            if lighting_enabled and light_on_attempted:
+                light_off_attempted = True
+                try:
+                    turn_light_off(self.config, self.logger)
+                    light_off_ok = True
+                except LightControlError as exc:
+                    light_off_ok = False
+                    light_off_error = str(exc)
+                    self.logger.critical("vision light_off_failed_critical error=%s", exc)
                 if cooldown_seconds > 0:
                     time.sleep(cooldown_seconds)
+
             if result is not None:
+                lighting_result = result.setdefault("lighting", {})
+                lighting_result.update(
+                    {
+                        "enabled": lighting_enabled,
+                        "warmup_seconds": warmup_seconds,
+                        "cooldown_seconds": cooldown_seconds,
+                        "light_on_attempted": light_on_attempted,
+                        "light_on_ok": light_on_ok,
+                        "light_off_attempted": light_off_attempted,
+                        "light_off_ok": light_off_ok,
+                        "light_off_error": light_off_error,
+                    }
+                )
                 self.logger.info("vision capture_pipeline_complete mode=scheduled_capture status=%s", result.get("status"))
 
 

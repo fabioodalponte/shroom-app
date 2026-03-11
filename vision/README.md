@@ -285,17 +285,42 @@ Configuracao:
 ```json
 "lighting": {
   "enabled": true,
+  "provider": "relay_http",
+  "base_url": "http://10.0.0.101",
+  "relay_channel": 2,
+  "request_timeout_seconds": 5,
+  "request_retries": 2,
+  "retry_backoff_seconds": 0.5,
+  "verify_state": true,
+  "verify_state_strict": false,
   "warmup_seconds": 8,
   "cooldown_seconds": 1
 }
 ```
 
+Exporte o token do controlador local no Raspberry:
+
+```bash
+export VISION_RELAY_API_TOKEN="shroombros-token-123"
+```
+
 Comportamento atual:
 
-1. `vision/hardware/light_control.py` ainda e stub
-2. `turn_light_on()` apenas loga `vision light_on`
-3. `turn_light_off()` apenas loga `vision light_off`
-4. o desligamento sempre acontece via `try/finally`
+1. `scheduled-capture` liga a luz localmente via `POST http://<base_url>/relay`
+2. espera o tempo de warmup
+3. executa internamente o `pipeline-once`
+4. desliga a luz no `finally`, mesmo se o pipeline falhar
+5. se `light_on` falhar, a captura e abortada com retorno estruturado
+6. se `light_off` falhar, o erro e logado como critico e o retorno e anotado
+7. se `verify_state=true`, o modulo tenta confirmar o estado via `GET /status`
+8. se `verify_state_strict=false`, falhas de verificacao geram warning, mas nao invalidam o comando
+
+Teste manual do rele local:
+
+```bash
+./vision/scripts/test_light_control.sh on
+./vision/scripts/test_light_control.sh off
+```
 
 Comando:
 
