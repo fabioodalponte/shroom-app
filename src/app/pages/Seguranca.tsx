@@ -823,10 +823,10 @@ export function Seguranca() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6 p-4 sm:p-6">
       {/* Header */}
       <div>
-        <h1 className="font-['Cormorant_Garamond']" style={{ fontSize: '42px', fontWeight: 700 }}>
+        <h1 className="font-['Cormorant_Garamond'] text-[34px] font-bold leading-none sm:text-[42px]">
           Segurança & Monitoramento
         </h1>
         <p className="text-[#1A1A1A] opacity-70 mt-1">
@@ -835,9 +835,9 @@ export function Seguranca() {
       </div>
 
       {/* Filtros */}
-      <div className="flex gap-4 flex-wrap items-center">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
         <Select value={loteSelecionado} onValueChange={setLoteSelecionado}>
-          <SelectTrigger className="w-64">
+          <SelectTrigger className="w-full sm:w-64">
             <SelectValue placeholder="Selecione um lote" />
           </SelectTrigger>
           <SelectContent>
@@ -851,7 +851,7 @@ export function Seguranca() {
         </Select>
 
         <Select value={periodoHistorico} onValueChange={(v: '24h' | '7d') => setPeriodoHistorico(v)}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-full sm:w-48">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -860,7 +860,7 @@ export function Seguranca() {
           </SelectContent>
         </Select>
 
-        <Button variant="outline" onClick={() => void carregarDados()}>
+        <Button variant="outline" onClick={() => void carregarDados()} className="w-full sm:w-auto">
           Atualizar
         </Button>
       </div>
@@ -966,10 +966,10 @@ export function Seguranca() {
 	        return (
 	          <Card key={lote.id} className={`border-l-4 ${risco.border}`}>
 	            <CardHeader>
-	              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-3">
-                    <span className="text-2xl font-['Cormorant_Garamond']">{lote.codigo_lote}</span>
+	              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <CardTitle className="flex flex-wrap items-center gap-2 sm:gap-3">
+                    <span className="text-xl font-['Cormorant_Garamond'] sm:text-2xl">{lote.codigo_lote}</span>
                     <Badge variant="outline">{lote.sala}</Badge>
                     <Badge variant="outline">{formatFaseLabel(lote.fase_operacional)}</Badge>
                     <Badge className={`${risco.bg} ${risco.text}`}>
@@ -983,12 +983,13 @@ export function Seguranca() {
                     </Badge>
                   </CardTitle>
                 </div>
-	                <div className="flex gap-2">
+	                <div className="flex flex-wrap gap-2">
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => abrirControleDaSala(lote)}
                       disabled={!controladorLote}
+                      className="flex-1 min-w-[150px] sm:flex-none"
                     >
                       <Settings2 className="w-4 h-4 mr-2" />
                       {controladorLote ? 'Controle da Sala' : 'Sem Controle'}
@@ -998,6 +999,7 @@ export function Seguranca() {
                       size="sm"
                       onClick={() => abrirConfiguracaoDoLote(lote)}
                       disabled={!cameraLote}
+                      className="flex-1 min-w-[120px] sm:flex-none"
                     >
                       <SlidersHorizontal className="w-4 h-4 mr-2" />
                       Configurar
@@ -1007,6 +1009,7 @@ export function Seguranca() {
                       size="sm"
                       onClick={() => abrirCameraDoLote(lote)}
                       disabled={!cameraLote}
+                      className="flex-1 min-w-[150px] sm:flex-none"
                     >
 	                    <Eye className="w-4 h-4 mr-2" />
 	                    {cameraLote ? 'Câmera ao Vivo' : 'Sem Câmera'}

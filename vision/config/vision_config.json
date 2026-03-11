@@ -1,0 +1,29 @@
+{
+  "enabled": true,
+  "site_name": "Shroom Bros",
+  "environment": "development",
+  "capture": {
+    "camera_name": "camera-sala-1",
+    "camera_url": "https://cam.cogumelos.net/capture",
+    "request_timeout_seconds": 10,
+    "verify_tls": true
+  },
+  "inference": {
+    "mode": "stub",
+    "target_labels": [
+      "bloco",
+      "colonizacao",
+      "contaminacao_visual"
+    ]
+  },
+  "storage": {
+    "artifacts_dir": "vision/storage/artifacts",
+    "results_dir": "vision/storage/results",
+    "dataset_dir": "vision/dataset"
+  },
+  "logging": {
+    "dir": "vision/logs",
+    "file_name": "vision.log",
+    "level": "INFO"
+  }
+}

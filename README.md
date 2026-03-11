@@ -9,6 +9,7 @@ This is a code bundle for Shroom - App Management. The original project is avail
 - Coolify deploy + domain: `DEPLOY-COOLIFY.md`
 - Raspberry MQTT bridge setup: `raspberry/README.md`
 - ESP32 firmware (sensores, camera e rele): `raspberry/esp32/README.md`
+- Vision module scaffold: `vision/README.md`
 
 ## Running the code
 
