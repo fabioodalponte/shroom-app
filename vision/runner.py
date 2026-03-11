@@ -22,7 +22,7 @@ class VisionOrchestrator:
         self.config = config
         self.logger = get_vision_logger(config)
         self.capture_client = ESP32CamCaptureClient(config)
-        self.inference_pipeline = VisionInferencePipeline(config)
+        self.inference_pipeline = VisionInferencePipeline(config, logger=self.logger)
         self.artifact_store = ArtifactStore(config)
 
     def status(self) -> dict[str, Any]:
@@ -32,9 +32,11 @@ class VisionOrchestrator:
             "enabled": self.config.get("enabled", False),
             "camera_url": self.config.get("capture", {}).get("camera_url"),
             "artifacts_dir": str(self.artifact_store.artifacts_dir),
+            "results_dir": str(self.artifact_store.results_dir),
             "dataset_dir": str(self.artifact_store.dataset_dir),
             "log_dir": str(self.config.get("logging", {}).get("dir", "vision/logs")),
             "mode": self.config.get("inference", {}).get("mode", "stub"),
+            "quality_thresholds": self.inference_pipeline.quality_thresholds,
         }
 
     def capture_once(self) -> dict[str, Any]:
@@ -90,6 +92,31 @@ class VisionOrchestrator:
             "result": inference_result,
         }
 
+    def quality_latest(self) -> dict[str, Any]:
+        """Run quality analysis against the latest saved snapshot."""
+        latest_snapshot = self.artifact_store.find_latest_snapshot()
+        if latest_snapshot is None:
+            return {
+                "status": "no_snapshot_found",
+                "artifacts_dir": str(self.artifact_store.artifacts_dir),
+            }
+
+        quality_result = self.inference_pipeline.analyze_image_quality(latest_snapshot)
+        saved_result = self.artifact_store.save_quality_result(latest_snapshot, quality_result)
+        self.logger.info(
+            "quality_result_saved image_path=%s result_path=%s status=%s",
+            latest_snapshot,
+            saved_result,
+            quality_result["status"],
+        )
+
+        return {
+            "status": "quality_complete",
+            "image_path": str(latest_snapshot),
+            "saved_result": str(saved_result),
+            "quality_check": quality_result,
+        }
+
 
 def print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=True))
@@ -99,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Shroom vision module runner")
     parser.add_argument(
         "command",
-        choices=["status", "capture-once", "pipeline-once"],
+        choices=["status", "capture-once", "pipeline-once", "quality-latest"],
         help="Action to execute",
     )
     parser.add_argument(
@@ -126,6 +153,10 @@ def main() -> int:
 
         if args.command == "pipeline-once":
             print_json(orchestrator.pipeline_once())
+            return 0
+
+        if args.command == "quality-latest":
+            print_json(orchestrator.quality_latest())
             return 0
 
         raise ValueError(f"Unsupported command: {args.command}")

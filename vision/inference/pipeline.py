@@ -1,40 +1,106 @@
-"""Placeholder inference pipeline.
-
-There is no AI model in this first cut.
-The pipeline only emits structured metadata so the rest of the system can
-be wired and tested before model work starts.
-"""
+"""Placeholder inference pipeline with local image quality analysis."""
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .evaluation import build_quality_thresholds, evaluate_quality
+from .metrics import calculate_quality_metrics
+from .preprocessing import ImageQualityError, load_image_bundle
+
 
 class VisionInferencePipeline:
-    """Stub that returns deterministic metadata for future expansion."""
+    """Stub pipeline that now includes quality checks before real AI exists."""
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any], logger: logging.Logger) -> None:
         self.config = config
+        self.logger = logger
         self.mode = config.get("inference", {}).get("mode", "stub")
         self.target_labels = config.get("inference", {}).get("target_labels", [])
+        self.quality_thresholds = build_quality_thresholds(config)
+
+    def analyze_image_quality(self, image_path: Path) -> dict[str, Any]:
+        """Run the local image quality checks without AI detection."""
+        try:
+            image_bundle = load_image_bundle(image_path)
+            metrics = calculate_quality_metrics(image_bundle)
+            evaluation = evaluate_quality(metrics, self.quality_thresholds)
+
+            self.logger.info(
+                "quality_check_complete image_path=%s status=%s brightness_mean=%s contrast_stddev=%s sharpness_score=%s",
+                image_path,
+                evaluation["status"],
+                metrics["brightness_mean"],
+                metrics["contrast_stddev"],
+                metrics["sharpness_score"],
+            )
+            return {
+                "status": evaluation["status"],
+                "dataset_eligible": evaluation["dataset_eligible"],
+                "metrics": metrics,
+                "flags": {
+                    **evaluation["flags"],
+                    "invalid_image": False,
+                },
+                "thresholds": evaluation["thresholds"],
+                "error": None,
+            }
+        except ImageQualityError as exc:
+            self.logger.error("quality_check_failed image_path=%s error=%s", image_path, exc)
+            return {
+                "status": "invalid_image",
+                "dataset_eligible": False,
+                "metrics": None,
+                "flags": {
+                    "low_resolution": False,
+                    "too_dark": False,
+                    "too_bright": False,
+                    "too_blurry": False,
+                    "invalid_image": True,
+                },
+                "thresholds": self.quality_thresholds,
+                "error": str(exc),
+            }
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.logger.exception("quality_check_unexpected_error image_path=%s", image_path)
+            return {
+                "status": "invalid_image",
+                "dataset_eligible": False,
+                "metrics": None,
+                "flags": {
+                    "low_resolution": False,
+                    "too_dark": False,
+                    "too_bright": False,
+                    "too_blurry": False,
+                    "invalid_image": True,
+                },
+                "thresholds": self.quality_thresholds,
+                "error": str(exc),
+            }
 
     def run(self, image_path: Path, capture_metadata: dict[str, Any]) -> dict[str, Any]:
+        quality_check = self.analyze_image_quality(image_path)
         return {
             "executed_at": datetime.now(timezone.utc).isoformat(),
             "mode": self.mode,
             "image_path": str(image_path),
             "capture_metadata": capture_metadata,
+            "quality_check": quality_check,
             "summary": {
                 "blocos_detectados": 0,
                 "contaminacao_visual_detectada": False,
                 "colonizacao_estimada": None,
+                "quality_status": quality_check["status"],
+                "dataset_eligible": quality_check["dataset_eligible"],
             },
             "detections": [],
             "notes": [
                 "Pipeline stub executado sem IA real.",
-                "Use este contrato para ligar persistencia, dataset e futuras rotinas de modelo."
+                "Use este contrato para ligar persistencia, dataset e futuras rotinas de modelo.",
+                "A etapa atual avalia apenas qualidade basica da imagem.",
             ],
             "target_labels": self.target_labels,
         }

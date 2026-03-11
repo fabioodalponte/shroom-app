@@ -36,17 +36,19 @@ O foco desta estrutura inicial e:
 1. o runner carrega `config/vision_config.json`
 2. o modulo de captura busca um snapshot da camera
 3. o snapshot e salvo em `storage/artifacts/YYYY/MM/DD/`
-4. a inferencia stub produz metadata sem IA real
-5. o resultado consolidado e salvo em JSON
+4. o pipeline calcula metricas basicas de qualidade da imagem
+5. a avaliacao gera um status final simples para uso operacional e dataset
+6. o resultado consolidado e salvo em JSON
 
 ## Arquivos principais
 
 - `runner.py`: ponto de entrada do modulo
 - `config/vision_config.json`: configuracao central
 - `capture/esp32_cam_capture.py`: cliente de captura da ESP32-CAM
-- `inference/pipeline.py`: stub do pipeline de inferencia
+- `inference/pipeline.py`: pipeline stub com quality check local
 - `storage/artifact_store.py`: salva imagens e resultados localmente
 - `scripts/test_capture.sh`: teste manual rapido da etapa de captura
+- `scripts/quality_latest.sh`: processa a ultima imagem ja capturada
 
 ## Captura de imagem
 
@@ -61,14 +63,43 @@ O primeiro corte da captura faz:
 Se a camera falhar, o runner retorna um payload estruturado com `status= capture_failed`
 ou `status= pipeline_capture_failed`, em vez de derrubar o processo com traceback.
 
+## Quality check da imagem
+
+A etapa 3 do modulo analisa a imagem capturada localmente, sem IA de blocos ainda.
+
+Metricas calculadas:
+
+1. resolucao
+2. brilho medio
+3. contraste estimado
+4. nitidez aproximada por intensidade de bordas
+
+Status finais possiveis:
+
+- `valid`
+- `too_dark`
+- `too_bright`
+- `too_blurry`
+- `low_resolution`
+- `invalid_image`
+
+O resultado inclui:
+
+1. metricas numericas
+2. flags booleanas por problema
+3. thresholds usados na avaliacao
+4. `dataset_eligible`
+
 ## Como rodar
 
 Da raiz do projeto:
 
 ```bash
+python3 -m pip install -r vision/requirements.txt
 python3 -m vision.runner status
 python3 -m vision.runner capture-once
 python3 -m vision.runner pipeline-once
+python3 -m vision.runner quality-latest
 ```
 
 Teste manual simplificado:
@@ -81,6 +112,12 @@ Se quiser usar outro arquivo de configuracao:
 
 ```bash
 ./vision/scripts/test_capture.sh /caminho/para/vision_config.json
+```
+
+Para processar apenas a ultima imagem capturada:
+
+```bash
+./vision/scripts/quality_latest.sh
 ```
 
 Se o ambiente local nao confiar na cadeia TLS do dominio da camera e aparecer
@@ -98,7 +135,58 @@ Use isso apenas em ambiente controlado.
 
 - imagens: `vision/storage/artifacts/YYYY/MM/DD/snapshot_<timestamp>.jpg`
 - metadata da captura: mesmo nome da imagem com extensao `.json`
+- resultado de quality check: `vision/storage/results/snapshot_<timestamp>_quality.json`
+- resultado do pipeline: `vision/storage/results/snapshot_<timestamp>_result.json`
 - log operacional: `vision/logs/vision.log`
+
+## Thresholds configuraveis
+
+Em `config/vision_config.json`:
+
+```json
+"quality": {
+  "min_width": 640,
+  "min_height": 480,
+  "brightness": {
+    "too_dark_below": 55.0,
+    "too_bright_above": 210.0
+  },
+  "sharpness": {
+    "too_blurry_below": 12.0
+  }
+}
+```
+
+## Exemplo resumido de JSON de saida
+
+```json
+{
+  "status": "quality_complete",
+  "image_path": "vision/storage/artifacts/2026/03/11/snapshot_20260311T173917217461Z.jpg",
+  "saved_result": "vision/storage/results/snapshot_20260311T173917217461Z_quality.json",
+  "quality_check": {
+    "status": "valid",
+    "dataset_eligible": true,
+    "metrics": {
+      "resolution": {
+        "width": 800,
+        "height": 600,
+        "total_pixels": 480000
+      },
+      "brightness_mean": 126.4,
+      "contrast_stddev": 38.2,
+      "sharpness_score": 19.6
+    },
+    "flags": {
+      "low_resolution": false,
+      "too_dark": false,
+      "too_bright": false,
+      "too_blurry": false,
+      "invalid_image": false
+    }
+  }
+}
+```
 
 ## Proximos passos naturais
 

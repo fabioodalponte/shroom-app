@@ -45,3 +45,16 @@ class ArtifactStore:
         result_path = self.results_dir / f"{image_path.stem}_result.json"
         result_path.write_text(json.dumps(result, indent=2, ensure_ascii=True), encoding="utf-8")
         return result_path
+
+    def save_quality_result(self, image_path: Path, result: dict[str, Any]) -> Path:
+        result_path = self.results_dir / f"{image_path.stem}_quality.json"
+        result_path.write_text(json.dumps(result, indent=2, ensure_ascii=True), encoding="utf-8")
+        return result_path
+
+    def find_latest_snapshot(self) -> Path | None:
+        snapshots = sorted(
+            self.artifacts_dir.rglob("snapshot_*.jpg"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        return snapshots[0] if snapshots else None
