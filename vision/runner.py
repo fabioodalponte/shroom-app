@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .capture.esp32_cam_capture import ESP32CamCaptureClient, capture_snapshot_safe
 from .config.loader import load_vision_config
+from .hardware.light_control import turn_light_off, turn_light_on
 from .inference.pipeline import VisionInferencePipeline
 from .logging_utils import get_vision_logger
 from .storage.artifact_store import ArtifactStore
@@ -38,6 +40,9 @@ class VisionOrchestrator:
             "capture_timeout_seconds": self.config.get("capture", {}).get("request_timeout_seconds", 15),
             "capture_retries": self.config.get("capture", {}).get("request_retries", 3),
             "capture_retry_backoff_seconds": self.config.get("capture", {}).get("retry_backoff_seconds", 1.0),
+            "lighting_enabled": self.config.get("lighting", {}).get("enabled", True),
+            "lighting_warmup_seconds": self.config.get("lighting", {}).get("warmup_seconds", 8),
+            "lighting_cooldown_seconds": self.config.get("lighting", {}).get("cooldown_seconds", 1),
             "artifacts_dir": str(self.artifact_store.artifacts_dir),
             "results_dir": str(self.artifact_store.results_dir),
             "dataset_dir": str(self.artifact_store.dataset_dir),
@@ -75,13 +80,16 @@ class VisionOrchestrator:
 
     def pipeline_once(self) -> dict[str, Any]:
         """Run the full placeholder pipeline once without crashing on capture errors."""
+        self.logger.info("vision capture_pipeline_start mode=pipeline_once")
         capture_result = capture_snapshot_safe(self.capture_client, self.logger)
         if not capture_result["ok"]:
-            return {
+            result = {
                 "status": "pipeline_capture_failed",
                 "error": capture_result["error"],
                 "camera_url": capture_result["camera_url"],
             }
+            self.logger.info("vision capture_pipeline_complete mode=pipeline_once status=%s", result["status"])
+            return result
 
         image_bytes = capture_result["image_bytes"]
         capture_metadata = capture_result["metadata"]
@@ -113,12 +121,14 @@ class VisionOrchestrator:
             result=inference_result,
         )
 
-        return {
+        result = {
             "status": "pipeline_complete",
             "saved_image": str(saved_image),
             "saved_result": str(saved_result),
             "result": inference_result,
         }
+        self.logger.info("vision capture_pipeline_complete mode=pipeline_once status=%s", result["status"])
+        return result
 
     def quality_latest(self) -> dict[str, Any]:
         """Run quality analysis against the latest saved snapshot."""
@@ -191,6 +201,47 @@ class VisionOrchestrator:
             "block_detection": detection_result,
         }
 
+    def scheduled_capture(self) -> dict[str, Any]:
+        """Run the full pipeline with optional room lighting control."""
+        lighting_config = self.config.get("lighting", {})
+        lighting_enabled = bool(lighting_config.get("enabled", True))
+        warmup_seconds = max(0.0, float(lighting_config.get("warmup_seconds", 8)))
+        cooldown_seconds = max(0.0, float(lighting_config.get("cooldown_seconds", 1)))
+
+        light_on_attempted = False
+        result: dict[str, Any] | None = None
+
+        try:
+            self.logger.info("vision capture_pipeline_start mode=scheduled_capture")
+            if lighting_enabled:
+                light_on_attempted = True
+                turn_light_on(self.config, self.logger)
+                self.logger.info("vision waiting_for_light seconds=%s", warmup_seconds)
+                if warmup_seconds > 0:
+                    time.sleep(warmup_seconds)
+            else:
+                self.logger.info("vision lighting_disabled_skip_light_control")
+
+            result = self.pipeline_once()
+            result["execution_mode"] = "scheduled_capture"
+            result["lighting"] = {
+                "enabled": lighting_enabled,
+                "warmup_seconds": warmup_seconds,
+                "cooldown_seconds": cooldown_seconds,
+                "light_on_attempted": light_on_attempted,
+                "light_off_attempted": False,
+            }
+            return result
+        finally:
+            if lighting_enabled:
+                turn_light_off(self.config, self.logger)
+                if result is not None:
+                    result["lighting"]["light_off_attempted"] = True
+                if cooldown_seconds > 0:
+                    time.sleep(cooldown_seconds)
+            if result is not None:
+                self.logger.info("vision capture_pipeline_complete mode=scheduled_capture status=%s", result.get("status"))
+
 
 def print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=True))
@@ -200,7 +251,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Shroom vision module runner")
     parser.add_argument(
         "command",
-        choices=["status", "capture-once", "pipeline-once", "quality-latest", "dataset-classify-latest", "detect-blocks-latest"],
+        choices=["status", "capture-once", "pipeline-once", "quality-latest", "dataset-classify-latest", "detect-blocks-latest", "scheduled-capture"],
         help="Action to execute",
     )
     parser.add_argument(
@@ -239,6 +290,10 @@ def main() -> int:
 
         if args.command == "detect-blocks-latest":
             print_json(orchestrator.detect_blocks_latest())
+            return 0
+
+        if args.command == "scheduled-capture":
+            print_json(orchestrator.scheduled_capture())
             return 0
 
         raise ValueError(f"Unsupported command: {args.command}")

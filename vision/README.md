@@ -185,6 +185,7 @@ python3 -m pip install -r vision/requirements.txt
 python3 -m vision.runner status
 python3 -m vision.runner capture-once
 python3 -m vision.runner pipeline-once
+python3 -m vision.runner scheduled-capture
 python3 -m vision.runner quality-latest
 python3 -m vision.runner dataset-classify-latest
 python3 -m vision.runner detect-blocks-latest
@@ -232,6 +233,12 @@ Para rodar apenas a inferencia de blocos na ultima captura:
 ./vision/scripts/detect_blocks_latest.sh
 ```
 
+Para rodar a captura automatica com controle de luz:
+
+```bash
+./vision/scripts/test_scheduled_capture.sh
+```
+
 Se o ambiente local nao confiar na cadeia TLS do dominio da camera e aparecer
 `CERTIFICATE_VERIFY_FAILED`, ajuste temporariamente a configuracao:
 
@@ -260,6 +267,47 @@ Comportamento:
 1. cada tentativa e logada separadamente
 2. falhas intermitentes nao derrubam o pipeline na primeira tentativa
 3. se todas as tentativas falharem, o erro final consolida os motivos por tentativa
+
+## Captura automatica com iluminacao
+
+O comando `scheduled-capture` foi criado para uso periodico via cron.
+
+Fluxo:
+
+1. ligar a luz da sala
+2. aguardar o tempo de warmup
+3. executar internamente o `pipeline-once`
+4. desligar a luz
+5. retornar o resultado do pipeline
+
+Configuracao:
+
+```json
+"lighting": {
+  "enabled": true,
+  "warmup_seconds": 8,
+  "cooldown_seconds": 1
+}
+```
+
+Comportamento atual:
+
+1. `vision/hardware/light_control.py` ainda e stub
+2. `turn_light_on()` apenas loga `vision light_on`
+3. `turn_light_off()` apenas loga `vision light_off`
+4. o desligamento sempre acontece via `try/finally`
+
+Comando:
+
+```bash
+python3 -m vision.runner scheduled-capture
+```
+
+Exemplo de cron a cada 10 minutos:
+
+```cron
+*/10 * * * * cd /caminho/para/shroom-app && /usr/bin/python3 -m vision.runner scheduled-capture
+```
 
 ## Saidas esperadas
 
