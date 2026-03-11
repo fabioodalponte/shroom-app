@@ -29,6 +29,10 @@ export function AppLayout() {
   const navigate = useNavigate();
   const { usuario, signOut } = useAuth();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 1023px)').matches;
+  });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false;
 
@@ -84,10 +88,12 @@ export function AppLayout() {
   }, [mobileSidebarOpen]);
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia('(min-width: 1024px)');
+    const mediaQuery = window.matchMedia('(max-width: 1023px)');
 
     const handleChange = () => {
-      if (mediaQuery.matches) {
+      const mobile = mediaQuery.matches;
+      setIsMobileViewport(mobile);
+      if (!mobile) {
         setMobileSidebarOpen(false);
       }
     };
@@ -163,45 +169,41 @@ export function AppLayout() {
         />
       </aside>
 
-      <div
-        className={cn(
-          'fixed inset-0 z-40 bg-black/50 transition-opacity duration-200 motion-reduce:transition-none lg:hidden',
-          mobileSidebarOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
-        )}
-      >
-        <button
-          type="button"
-          className="w-full h-full"
-          aria-label="Fechar menu"
-          onClick={() => setMobileSidebarOpen(false)}
-        />
-      </div>
+      {isMobileViewport && mobileSidebarOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/50 transition-opacity duration-200 motion-reduce:transition-none lg:hidden">
+            <button
+              type="button"
+              className="w-full h-full"
+              aria-label="Fechar menu"
+              onClick={() => setMobileSidebarOpen(false)}
+            />
+          </div>
 
-      <aside
-        id="mobile-sidebar"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Menu principal"
-        className={cn(
-          'fixed top-0 left-0 bottom-0 z-50 w-[min(85vw,320px)] bg-[#1A1A1A] text-white transition-transform duration-300 motion-reduce:transition-none lg:hidden',
-          mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full',
-        )}
-      >
-        <SidebarNavigation
-          navItems={navItems}
-          collapsed={false}
-          mobile
-          usuarioNome={usuario?.nome}
-          usuarioTipo={usuario?.tipo_usuario}
-          tipoUsuarioLabel={tipoUsuarioLabel as Record<string, string>}
-          onNavigate={() => setMobileSidebarOpen(false)}
-          onCloseMobile={() => setMobileSidebarOpen(false)}
-          onLogout={() => {
-            setMobileSidebarOpen(false);
-            void handleLogout();
-          }}
-        />
-      </aside>
+          <aside
+            id="mobile-sidebar"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Menu principal"
+            className="fixed top-0 left-0 bottom-0 z-50 w-[min(85vw,320px)] bg-[#1A1A1A] text-white transition-transform duration-300 motion-reduce:transition-none lg:hidden translate-x-0"
+          >
+            <SidebarNavigation
+              navItems={navItems}
+              collapsed={false}
+              mobile
+              usuarioNome={usuario?.nome}
+              usuarioTipo={usuario?.tipo_usuario}
+              tipoUsuarioLabel={tipoUsuarioLabel as Record<string, string>}
+              onNavigate={() => setMobileSidebarOpen(false)}
+              onCloseMobile={() => setMobileSidebarOpen(false)}
+              onLogout={() => {
+                setMobileSidebarOpen(false);
+                void handleLogout();
+              }}
+            />
+          </aside>
+        </>
+      )}
 
       <main
         className={cn(
