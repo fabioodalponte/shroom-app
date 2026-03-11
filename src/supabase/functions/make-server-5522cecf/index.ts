@@ -1287,6 +1287,67 @@ app.post("/make-server-5522cecf/controladores/:id/mode", async (c) => {
 });
 
 // ============================================
+// VISION PIPELINE
+// ============================================
+
+app.get("/make-server-5522cecf/vision/runs/latest", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const run = await db.getVisionPipelineLatestRun();
+    return c.json({ run });
+  } catch (error) {
+    console.error('Erro ao buscar última captura vision:', error);
+    return c.json({ error: error.message || 'Erro ao buscar última captura vision' }, 500);
+  }
+});
+
+app.get("/make-server-5522cecf/vision/runs", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const qualityStatus = c.req.query('quality_status') || undefined;
+    const remoteStatusRaw = c.req.query('remote_status') || undefined;
+    const daysRaw = c.req.query('days');
+    const limitRaw = c.req.query('limit');
+    const remoteStatus = ['ok', 'failed', 'pending'].includes(String(remoteStatusRaw))
+      ? (remoteStatusRaw as 'ok' | 'failed' | 'pending')
+      : undefined;
+
+    const runs = await db.getVisionPipelineRuns({
+      quality_status: qualityStatus,
+      remote_status: remoteStatus,
+      days: daysRaw ? Number.parseInt(String(daysRaw), 10) : undefined,
+      limit: limitRaw ? Number.parseInt(String(limitRaw), 10) : undefined,
+    });
+
+    return c.json({ runs });
+  } catch (error) {
+    console.error('Erro ao listar capturas vision:', error);
+    return c.json({ error: error.message || 'Erro ao listar capturas vision' }, 500);
+  }
+});
+
+app.get("/make-server-5522cecf/vision/runs/:id", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const run = await db.getVisionPipelineRunById(c.req.param('id'));
+    if (!run) {
+      return c.json({ error: 'Captura vision não encontrada' }, 404);
+    }
+
+    return c.json({ run });
+  } catch (error) {
+    console.error('Erro ao buscar detalhe da captura vision:', error);
+    return c.json({ error: error.message || 'Erro ao buscar detalhe da captura vision' }, 500);
+  }
+});
+
+// ============================================
 // USUÁRIOS
 // ============================================
 

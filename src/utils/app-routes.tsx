@@ -20,6 +20,7 @@ import { Checklists } from "../app/pages/Checklists";
 import { Financeiro } from "../app/pages/Financeiro";
 import { Perfil } from "../app/pages/Perfil";
 import { Seguranca } from "../app/pages/Seguranca";
+import { Vision } from "../app/pages/Vision";
 import { Debug } from "../app/pages/Debug";
 import { OperacaoInoculacao } from "../app/pages/OperacaoInoculacao";
 import { OperacaoFrutificacao } from "../app/pages/OperacaoFrutificacao";
@@ -100,6 +101,10 @@ export const router = createBrowserRouter([
       {
         path: "seguranca",
         Component: Seguranca,
+      },
+      {
+        path: "vision",
+        Component: Vision,
       },
       {
         path: "operacao/inoculacao",

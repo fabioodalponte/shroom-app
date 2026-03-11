@@ -40,6 +40,9 @@ class VisionOrchestrator:
             "dataset_dir": str(self.artifact_store.dataset_dir),
             "log_dir": str(self.config.get("logging", {}).get("dir", "vision/logs")),
             "mode": self.config.get("inference", {}).get("mode", "stub"),
+            "inference_enabled": self.config.get("inference", {}).get("enabled", True),
+            "inference_model": self.config.get("inference", {}).get("model"),
+            "inference_device": self.config.get("inference", {}).get("device", "cpu"),
             "quality_thresholds": self.inference_pipeline.quality_thresholds,
             "dataset_classification_enabled": self.dataset_classifier.enabled,
             "remote_persistence_enabled": self.remote_persister.enabled,
@@ -169,6 +172,22 @@ class VisionOrchestrator:
         payload["saved_result"] = str(saved_result)
         return payload
 
+    def detect_blocks_latest(self) -> dict[str, Any]:
+        """Run only the block detector against the latest saved snapshot."""
+        latest_snapshot = self.artifact_store.find_latest_snapshot()
+        if latest_snapshot is None:
+            return {
+                "status": "no_snapshot_found",
+                "artifacts_dir": str(self.artifact_store.artifacts_dir),
+            }
+
+        detection_result = self.inference_pipeline.detect_blocks(latest_snapshot)
+        return {
+            "status": "block_detection_complete",
+            "image_path": str(latest_snapshot),
+            "block_detection": detection_result,
+        }
+
 
 def print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=True))
@@ -178,7 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Shroom vision module runner")
     parser.add_argument(
         "command",
-        choices=["status", "capture-once", "pipeline-once", "quality-latest", "dataset-classify-latest"],
+        choices=["status", "capture-once", "pipeline-once", "quality-latest", "dataset-classify-latest", "detect-blocks-latest"],
         help="Action to execute",
     )
     parser.add_argument(
@@ -213,6 +232,10 @@ def main() -> int:
 
         if args.command == "dataset-classify-latest":
             print_json(orchestrator.dataset_classify_latest())
+            return 0
+
+        if args.command == "detect-blocks-latest":
+            print_json(orchestrator.detect_blocks_latest())
             return 0
 
         raise ValueError(f"Unsupported command: {args.command}")

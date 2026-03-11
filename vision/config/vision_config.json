@@ -9,7 +9,11 @@
     "verify_tls": true
   },
   "inference": {
-    "mode": "stub",
+    "enabled": true,
+    "mode": "yolov8",
+    "model": "vision/models/block_detector.pt",
+    "device": "cpu",
+    "confidence_threshold": 0.25,
     "target_labels": [
       "bloco",
       "colonizacao",

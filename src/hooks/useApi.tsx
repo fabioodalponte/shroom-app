@@ -203,6 +203,18 @@ export function useConsumirInsumo(loteId: string) {
   });
 }
 
+export function useVisionLatestRun() {
+  return useGet('/vision/runs/latest');
+}
+
+export function useVisionRuns() {
+  return useGet('/vision/runs');
+}
+
+export function useVisionRunDetails(id: string) {
+  return useGet(`/vision/runs/${id}`);
+}
+
 export function useRegistrarInoculacao(loteId: string) {
   return usePost(`/lotes/${loteId}/inoculacao`, {
     showSuccessToast: true,

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .block_detection import detect_blocks
 from .evaluation import build_quality_thresholds, evaluate_quality
 from .metrics import calculate_quality_metrics
 from .preprocessing import ImageQualityError, load_image_bundle
@@ -81,26 +82,36 @@ class VisionInferencePipeline:
                 "error": str(exc),
             }
 
+    def detect_blocks(self, image_path: Path) -> dict[str, Any]:
+        """Run optional YOLOv8 block detection with safe fallback."""
+        return detect_blocks(
+            image_path=image_path,
+            config=self.config,
+            logger=self.logger,
+        )
+
     def run(self, image_path: Path, capture_metadata: dict[str, Any]) -> dict[str, Any]:
         quality_check = self.analyze_image_quality(image_path)
+        block_detection = self.detect_blocks(image_path)
         return {
             "executed_at": datetime.now(timezone.utc).isoformat(),
             "mode": self.mode,
             "image_path": str(image_path),
             "capture_metadata": capture_metadata,
             "quality_check": quality_check,
+            "block_detection": block_detection,
             "summary": {
-                "blocos_detectados": 0,
+                "blocos_detectados": block_detection["blocos_detectados"],
                 "contaminacao_visual_detectada": False,
                 "colonizacao_estimada": None,
                 "quality_status": quality_check["status"],
                 "dataset_eligible": quality_check["dataset_eligible"],
             },
-            "detections": [],
+            "detections": block_detection["detections"],
             "notes": [
-                "Pipeline stub executado sem IA real.",
-                "Use este contrato para ligar persistencia, dataset e futuras rotinas de modelo.",
-                "A etapa atual avalia apenas qualidade basica da imagem.",
+                "Pipeline executado com quality check local e detector inicial de blocos.",
+                "A deteccao de colonizacao e contaminacao_visual ainda nao esta implementada.",
+                "Se o modelo YOLO nao existir, a deteccao retorna lista vazia sem quebrar o fluxo.",
             ],
             "target_labels": self.target_labels,
         }

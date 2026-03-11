@@ -27,6 +27,8 @@ O foco desta estrutura inicial e:
 - `storage/`: persistencia local de imagens, metadata e resultados
 - `scripts/`: atalhos operacionais para rodar o modulo
 - `config/`: configuracao central do modulo
+- `models/`: pesos e loaders dos modelos usados no Raspberry
+- `training/`: scripts de treino e artefatos de treinamento
 - `dataset/`: armazenamento local para dataset cru, processado e anotacoes
 - `logs/`: logs locais do pipeline
 - `runner.py`: orquestrador principal do modulo
@@ -39,8 +41,9 @@ O foco desta estrutura inicial e:
 4. o pipeline calcula metricas basicas de qualidade da imagem
 5. a avaliacao gera um status final simples para uso operacional e dataset
 6. a classificacao do dataset copia ou cria link para a categoria local correta
-7. a persistencia remota envia a imagem e o resultado ao Supabase
-8. o resultado consolidado e salvo em JSON
+7. a deteccao inicial de blocos roda com YOLOv8 se o modelo existir
+8. a persistencia remota envia a imagem e o resultado ao Supabase
+9. o resultado consolidado e salvo em JSON
 
 ## Arquivos principais
 
@@ -53,9 +56,13 @@ O foco desta estrutura inicial e:
 - `storage/remote_persistence.py`: orquestra upload para Storage e insert no banco
 - `storage/supabase_storage.py`: upload da imagem para o bucket
 - `storage/supabase_records.py`: insert do resultado na tabela remota
+- `models/yolo_block_detector.py`: loader defensivo do modelo YOLOv8
+- `inference/block_detection.py`: inferencia inicial de blocos
+- `training/train_yolo_blocks.py`: script de treino do detector
 - `scripts/test_capture.sh`: teste manual rapido da etapa de captura
 - `scripts/quality_latest.sh`: processa a ultima imagem ja capturada
 - `scripts/dataset_classify_latest.sh`: classifica a ultima imagem no dataset local
+- `scripts/detect_blocks_latest.sh`: roda inferencia apenas na ultima imagem
 
 ## Captura de imagem
 
@@ -130,6 +137,44 @@ O JSON final local passa a incluir:
 3. `db_record_created`
 4. `remote_persistence`
 
+## Deteccao inicial de blocos com YOLOv8
+
+Esta etapa adiciona uma inferencia inicial para a classe `bloco`.
+
+Comportamento:
+
+1. o pipeline tenta carregar `vision/models/block_detector.pt`
+2. se o modelo nao existir, retorna fallback vazio
+3. se o modelo existir, roda em CPU com `ultralytics`
+4. o pipeline preenche:
+   - `summary.blocos_detectados`
+   - `detections`
+   - `block_detection`
+
+Formato retornado:
+
+```json
+{
+  "blocos_detectados": 12,
+  "detections": [
+    {
+      "label": "bloco",
+      "confidence": 0.91,
+      "bbox": [120, 230, 300, 410]
+    }
+  ]
+}
+```
+
+Fallback seguro:
+
+```json
+{
+  "blocos_detectados": 0,
+  "detections": []
+}
+```
+
 ## Como rodar
 
 Da raiz do projeto:
@@ -141,6 +186,7 @@ python3 -m vision.runner capture-once
 python3 -m vision.runner pipeline-once
 python3 -m vision.runner quality-latest
 python3 -m vision.runner dataset-classify-latest
+python3 -m vision.runner detect-blocks-latest
 ```
 
 ## Variaveis de ambiente
@@ -177,6 +223,12 @@ Para classificar a ultima imagem no dataset local:
 
 ```bash
 ./vision/scripts/dataset_classify_latest.sh
+```
+
+Para rodar apenas a inferencia de blocos na ultima captura:
+
+```bash
+./vision/scripts/detect_blocks_latest.sh
 ```
 
 Se o ambiente local nao confiar na cadeia TLS do dominio da camera e aparecer
@@ -224,6 +276,49 @@ Em `config/vision_config.json`:
   "db_table": "vision_pipeline_runs",
   "storage_prefix": "vision/captures"
 }
+```
+
+## Configuracao da inferencia YOLOv8
+
+Em `config/vision_config.json`:
+
+```json
+"inference": {
+  "enabled": true,
+  "mode": "yolov8",
+  "model": "vision/models/block_detector.pt",
+  "device": "cpu",
+  "confidence_threshold": 0.25
+}
+```
+
+Se o modelo ainda nao existir, o pipeline continua funcionando com deteccao vazia.
+
+## Estrutura esperada para treino
+
+```text
+vision/dataset/train/images
+vision/dataset/train/labels
+vision/dataset/val/images
+vision/dataset/val/labels
+```
+
+Classe atual:
+
+```text
+0 bloco
+```
+
+Comando de treino:
+
+```bash
+python3 vision/training/train_yolo_blocks.py
+```
+
+Modelo final salvo em:
+
+```text
+vision/models/block_detector.pt
 ```
 
 ## Thresholds configuraveis

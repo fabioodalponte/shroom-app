@@ -1101,6 +1101,127 @@ export async function getControladorSalaById(id: string) {
 }
 
 /**
+ * VISION PIPELINE RUNS
+ */
+const VISION_STORAGE_BUCKET =
+  Deno.env.get('SUPABASE_STORAGE_BUCKET') ||
+  Deno.env.get('VISION_STORAGE_BUCKET') ||
+  '';
+const VISION_PREVIEW_URL_EXPIRES_IN = 60 * 60;
+
+async function attachVisionPreviewUrl(run: any) {
+  if (!run) return null;
+
+  if (!run.image_storage_path || !VISION_STORAGE_BUCKET) {
+    return {
+      ...run,
+      storage_bucket: VISION_STORAGE_BUCKET || null,
+      preview_url: null,
+      preview_expires_in_seconds: null,
+    };
+  }
+
+  const { data, error } = await supabase
+    .storage
+    .from(VISION_STORAGE_BUCKET)
+    .createSignedUrl(run.image_storage_path, VISION_PREVIEW_URL_EXPIRES_IN);
+
+  if (error) {
+    console.error('Erro ao criar signed URL da captura vision:', error);
+    return {
+      ...run,
+      storage_bucket: VISION_STORAGE_BUCKET,
+      preview_url: null,
+      preview_expires_in_seconds: null,
+      preview_error: error.message,
+    };
+  }
+
+  return {
+    ...run,
+    storage_bucket: VISION_STORAGE_BUCKET,
+    preview_url: data?.signedUrl || null,
+    preview_expires_in_seconds: VISION_PREVIEW_URL_EXPIRES_IN,
+  };
+}
+
+interface VisionRunFilters {
+  quality_status?: string;
+  remote_status?: 'ok' | 'failed' | 'pending';
+  days?: number;
+  limit?: number;
+}
+
+export async function getVisionPipelineLatestRun() {
+  const { data, error } = await supabase
+    .from('vision_pipeline_runs')
+    .select('*')
+    .order('executed_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return attachVisionPreviewUrl(data);
+}
+
+export async function getVisionPipelineRuns(filters?: VisionRunFilters) {
+  let query = supabase
+    .from('vision_pipeline_runs')
+    .select('*')
+    .order('executed_at', { ascending: false });
+
+  const limit = Math.max(1, Math.min(Number(filters?.limit || 20), 100));
+  query = query.limit(Math.max(limit * 3, 50));
+
+  if (filters?.quality_status) {
+    query = query.eq('quality_status', filters.quality_status);
+  }
+
+  if (filters?.days && Number.isFinite(filters.days) && filters.days > 0) {
+    const since = new Date(Date.now() - filters.days * 24 * 60 * 60 * 1000).toISOString();
+    query = query.gte('executed_at', since);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  let runs = data || [];
+
+  if (filters?.remote_status) {
+    runs = runs.filter((run) => {
+      const remote = run?.raw_result_json?.remote_persistence;
+      if (!remote) {
+        return filters.remote_status === 'pending';
+      }
+
+      if (filters.remote_status === 'ok') {
+        return Boolean(remote.remote_persisted);
+      }
+
+      if (filters.remote_status === 'failed') {
+        return Boolean(remote.error || remote.storage_uploaded || remote.db_record_created) && !remote.remote_persisted;
+      }
+
+      return !remote.remote_persisted && !remote.error && !remote.storage_uploaded && !remote.db_record_created;
+    });
+  }
+
+  runs = runs.slice(0, limit);
+  return Promise.all(runs.map((run) => attachVisionPreviewUrl(run)));
+}
+
+export async function getVisionPipelineRunById(id: string) {
+  const { data, error } = await supabase
+    .from('vision_pipeline_runs')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) throw error;
+  return attachVisionPreviewUrl(data);
+}
+
+/**
  * USUÁRIOS
  */
 export async function getUsuarios(tipo?: string) {
