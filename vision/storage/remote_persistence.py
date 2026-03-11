@@ -53,6 +53,7 @@ class VisionRemotePersister:
 
         storage_result = self.storage_uploader.upload_image(image_path, object_path, content_type)
         if not storage_result["ok"]:
+            storage_failure = self._build_storage_failure_details(storage_result)
             queue_path = self.artifact_store.enqueue_remote_retry(
                 image_path=image_path,
                 pipeline_result=pipeline_result,
@@ -61,13 +62,23 @@ class VisionRemotePersister:
                     "storage_path": object_path,
                     "error": storage_result["error"],
                     "response": storage_result["response"],
+                    "storage_diagnostics": storage_failure,
                 },
             )
             self.logger.error(
-                "remote_storage_upload_failed image_path=%s storage_path=%s error=%s retry_manifest=%s",
+                "remote_storage_upload_failed image_path=%s bucket=%s storage_path=%s endpoint=%s "
+                "content_type=%s file_size_bytes=%s http_status=%s error=%s "
+                "response_useful_fields=%s response_text=%r retry_manifest=%s",
                 image_path,
-                object_path,
+                storage_failure["bucket"],
+                storage_failure["storage_path"],
+                storage_failure["endpoint"],
+                storage_failure["content_type_sent"],
+                storage_failure["file_size_bytes"],
+                storage_failure["http_status"],
                 storage_result["error"],
+                storage_failure["response_useful_fields"],
+                storage_failure["response_text"],
                 queue_path,
             )
             return {
@@ -80,6 +91,7 @@ class VisionRemotePersister:
                 "db_table": self.db_table,
                 "retry_manifest_path": str(queue_path),
                 "error": storage_result["error"],
+                "storage_diagnostics": storage_failure,
             }
 
         db_payload = self._build_db_payload(
@@ -218,4 +230,18 @@ class VisionRemotePersister:
             "db_table": self.db_table,
             "retry_manifest_path": None,
             "error": reason,
+        }
+
+    def _build_storage_failure_details(self, storage_result: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "http_status": storage_result.get("http_status"),
+            "bucket": storage_result.get("bucket"),
+            "storage_path": storage_result.get("storage_path"),
+            "endpoint": storage_result.get("endpoint"),
+            "content_type_sent": storage_result.get("content_type_sent"),
+            "file_size_bytes": storage_result.get("file_size_bytes"),
+            "response_body": storage_result.get("response_body"),
+            "response_text": storage_result.get("response_text"),
+            "response_json": storage_result.get("response_json"),
+            "response_useful_fields": storage_result.get("response_useful_fields"),
         }
