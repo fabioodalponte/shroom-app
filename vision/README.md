@@ -38,7 +38,8 @@ O foco desta estrutura inicial e:
 3. o snapshot e salvo em `storage/artifacts/YYYY/MM/DD/`
 4. o pipeline calcula metricas basicas de qualidade da imagem
 5. a avaliacao gera um status final simples para uso operacional e dataset
-6. o resultado consolidado e salvo em JSON
+6. a classificacao do dataset copia ou cria link para a categoria local correta
+7. o resultado consolidado e salvo em JSON
 
 ## Arquivos principais
 
@@ -47,8 +48,10 @@ O foco desta estrutura inicial e:
 - `capture/esp32_cam_capture.py`: cliente de captura da ESP32-CAM
 - `inference/pipeline.py`: pipeline stub com quality check local
 - `storage/artifact_store.py`: salva imagens e resultados localmente
+- `storage/dataset_classifier.py`: organiza o dataset local com base no quality check
 - `scripts/test_capture.sh`: teste manual rapido da etapa de captura
 - `scripts/quality_latest.sh`: processa a ultima imagem ja capturada
+- `scripts/dataset_classify_latest.sh`: classifica a ultima imagem no dataset local
 
 ## Captura de imagem
 
@@ -90,6 +93,19 @@ O resultado inclui:
 3. thresholds usados na avaliacao
 4. `dataset_eligible`
 
+## Classificacao automatica do dataset
+
+Regras atuais:
+
+1. `quality_status = valid` e `dataset_eligible = true`
+   - classifica em `dataset/raw/valid/`
+2. `dataset_eligible = false`
+   - classifica em `dataset/raw/rejected/<quality_status>/`
+
+O arquivo original da captura nao e movido.
+O classificador tenta criar hardlink primeiro e faz copia se necessario.
+Um metadata JSON complementar e salvo ao lado da imagem classificada.
+
 ## Como rodar
 
 Da raiz do projeto:
@@ -100,6 +116,7 @@ python3 -m vision.runner status
 python3 -m vision.runner capture-once
 python3 -m vision.runner pipeline-once
 python3 -m vision.runner quality-latest
+python3 -m vision.runner dataset-classify-latest
 ```
 
 Teste manual simplificado:
@@ -120,6 +137,12 @@ Para processar apenas a ultima imagem capturada:
 ./vision/scripts/quality_latest.sh
 ```
 
+Para classificar a ultima imagem no dataset local:
+
+```bash
+./vision/scripts/dataset_classify_latest.sh
+```
+
 Se o ambiente local nao confiar na cadeia TLS do dominio da camera e aparecer
 `CERTIFICATE_VERIFY_FAILED`, ajuste temporariamente a configuracao:
 
@@ -137,7 +160,22 @@ Use isso apenas em ambiente controlado.
 - metadata da captura: mesmo nome da imagem com extensao `.json`
 - resultado de quality check: `vision/storage/results/snapshot_<timestamp>_quality.json`
 - resultado do pipeline: `vision/storage/results/snapshot_<timestamp>_result.json`
+- imagem classificada no dataset: `vision/dataset/raw/valid/` ou `vision/dataset/raw/rejected/<status>/`
+- metadata complementar da classificacao: JSON ao lado da imagem classificada
 - log operacional: `vision/logs/vision.log`
+
+## Configuracao da classificacao de dataset
+
+Em `config/vision_config.json`:
+
+```json
+"dataset_classification": {
+  "enabled": true,
+  "mode": "hardlink_or_copy",
+  "valid_subdir": "raw/valid",
+  "rejected_subdir": "raw/rejected"
+}
+```
 
 ## Thresholds configuraveis
 

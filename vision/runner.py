@@ -13,6 +13,7 @@ from .config.loader import load_vision_config
 from .inference.pipeline import VisionInferencePipeline
 from .logging_utils import get_vision_logger
 from .storage.artifact_store import ArtifactStore
+from .storage.dataset_classifier import DatasetClassifier
 
 
 class VisionOrchestrator:
@@ -24,6 +25,7 @@ class VisionOrchestrator:
         self.capture_client = ESP32CamCaptureClient(config)
         self.inference_pipeline = VisionInferencePipeline(config, logger=self.logger)
         self.artifact_store = ArtifactStore(config)
+        self.dataset_classifier = DatasetClassifier(config, logger=self.logger)
 
     def status(self) -> dict[str, Any]:
         """Return static runtime status without touching camera or model."""
@@ -37,6 +39,7 @@ class VisionOrchestrator:
             "log_dir": str(self.config.get("logging", {}).get("dir", "vision/logs")),
             "mode": self.config.get("inference", {}).get("mode", "stub"),
             "quality_thresholds": self.inference_pipeline.quality_thresholds,
+            "dataset_classification_enabled": self.dataset_classifier.enabled,
         }
 
     def capture_once(self) -> dict[str, Any]:
@@ -79,6 +82,12 @@ class VisionOrchestrator:
             image_path=saved_image,
             capture_metadata=capture_metadata,
         )
+        dataset_classification = self.dataset_classifier.classify_safe(
+            image_path=saved_image,
+            quality_check=inference_result["quality_check"],
+        )
+        inference_result["dataset_classification"] = dataset_classification
+        inference_result["summary"]["dataset_class"] = dataset_classification["dataset_class"]
 
         saved_result = self.artifact_store.save_inference_result(
             image_path=saved_image,
@@ -117,6 +126,36 @@ class VisionOrchestrator:
             "quality_check": quality_result,
         }
 
+    def dataset_classify_latest(self) -> dict[str, Any]:
+        """Run quality check and dataset classification for the latest snapshot."""
+        latest_snapshot = self.artifact_store.find_latest_snapshot()
+        if latest_snapshot is None:
+            return {
+                "status": "no_snapshot_found",
+                "artifacts_dir": str(self.artifact_store.artifacts_dir),
+            }
+
+        quality_result = self.inference_pipeline.analyze_image_quality(latest_snapshot)
+        dataset_classification = self.dataset_classifier.classify_safe(
+            image_path=latest_snapshot,
+            quality_check=quality_result,
+        )
+        payload = {
+            "status": "dataset_classification_complete",
+            "image_path": str(latest_snapshot),
+            "quality_check": quality_result,
+            "dataset_classification": dataset_classification,
+        }
+        saved_result = self.artifact_store.save_quality_result(latest_snapshot, payload)
+        self.logger.info(
+            "dataset_classification_result_saved image_path=%s result_path=%s dataset_class=%s",
+            latest_snapshot,
+            saved_result,
+            dataset_classification["dataset_class"],
+        )
+        payload["saved_result"] = str(saved_result)
+        return payload
+
 
 def print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=True))
@@ -126,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Shroom vision module runner")
     parser.add_argument(
         "command",
-        choices=["status", "capture-once", "pipeline-once", "quality-latest"],
+        choices=["status", "capture-once", "pipeline-once", "quality-latest", "dataset-classify-latest"],
         help="Action to execute",
     )
     parser.add_argument(
@@ -157,6 +196,10 @@ def main() -> int:
 
         if args.command == "quality-latest":
             print_json(orchestrator.quality_latest())
+            return 0
+
+        if args.command == "dataset-classify-latest":
+            print_json(orchestrator.dataset_classify_latest())
             return 0
 
         raise ValueError(f"Unsupported command: {args.command}")
