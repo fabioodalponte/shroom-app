@@ -30,13 +30,19 @@
   "storage": {
     "artifacts_dir": "vision/storage/artifacts",
     "results_dir": "vision/storage/results",
-    "dataset_dir": "vision/dataset"
+    "dataset_dir": "vision/dataset",
+    "reprocess_dir": "vision/storage/reprocess_queue"
   },
   "dataset_classification": {
     "enabled": true,
     "mode": "hardlink_or_copy",
     "valid_subdir": "raw/valid",
     "rejected_subdir": "raw/rejected"
+  },
+  "remote_persistence": {
+    "enabled": true,
+    "db_table": "vision_pipeline_runs",
+    "storage_prefix": "vision/captures"
   },
   "logging": {
     "dir": "vision/logs",

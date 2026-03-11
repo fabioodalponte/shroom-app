@@ -39,7 +39,8 @@ O foco desta estrutura inicial e:
 4. o pipeline calcula metricas basicas de qualidade da imagem
 5. a avaliacao gera um status final simples para uso operacional e dataset
 6. a classificacao do dataset copia ou cria link para a categoria local correta
-7. o resultado consolidado e salvo em JSON
+7. a persistencia remota envia a imagem e o resultado ao Supabase
+8. o resultado consolidado e salvo em JSON
 
 ## Arquivos principais
 
@@ -49,6 +50,9 @@ O foco desta estrutura inicial e:
 - `inference/pipeline.py`: pipeline stub com quality check local
 - `storage/artifact_store.py`: salva imagens e resultados localmente
 - `storage/dataset_classifier.py`: organiza o dataset local com base no quality check
+- `storage/remote_persistence.py`: orquestra upload para Storage e insert no banco
+- `storage/supabase_storage.py`: upload da imagem para o bucket
+- `storage/supabase_records.py`: insert do resultado na tabela remota
 - `scripts/test_capture.sh`: teste manual rapido da etapa de captura
 - `scripts/quality_latest.sh`: processa a ultima imagem ja capturada
 - `scripts/dataset_classify_latest.sh`: classifica a ultima imagem no dataset local
@@ -106,6 +110,26 @@ O arquivo original da captura nao e movido.
 O classificador tenta criar hardlink primeiro e faz copia se necessario.
 Um metadata JSON complementar e salvo ao lado da imagem classificada.
 
+## Persistencia remota no Supabase
+
+Depois do `pipeline-once`, o modulo tenta:
+
+1. subir a imagem capturada para o Supabase Storage
+2. criar um registro na tabela remota com o resultado consolidado
+
+Se qualquer etapa falhar:
+
+1. o pipeline local continua
+2. os artefatos locais sao mantidos
+3. um manifesto JSON e salvo em `vision/storage/reprocess_queue/` para retry futuro
+
+O JSON final local passa a incluir:
+
+1. `remote_persisted`
+2. `storage_uploaded`
+3. `db_record_created`
+4. `remote_persistence`
+
 ## Como rodar
 
 Da raiz do projeto:
@@ -118,6 +142,18 @@ python3 -m vision.runner pipeline-once
 python3 -m vision.runner quality-latest
 python3 -m vision.runner dataset-classify-latest
 ```
+
+## Variaveis de ambiente
+
+Necessarias para a persistencia remota:
+
+```bash
+export SUPABASE_URL="https://seu-projeto.supabase.co"
+export SUPABASE_KEY="sua-chave"
+export SUPABASE_STORAGE_BUCKET="vision-captures"
+```
+
+Template: [vision/config/.env.example](/Users/fabiodalponte/Workspace/shroom-app/vision/config/.env.example)
 
 Teste manual simplificado:
 
@@ -162,6 +198,7 @@ Use isso apenas em ambiente controlado.
 - resultado do pipeline: `vision/storage/results/snapshot_<timestamp>_result.json`
 - imagem classificada no dataset: `vision/dataset/raw/valid/` ou `vision/dataset/raw/rejected/<status>/`
 - metadata complementar da classificacao: JSON ao lado da imagem classificada
+- manifestos de retry remoto: `vision/storage/reprocess_queue/remote_retry_<timestamp>.json`
 - log operacional: `vision/logs/vision.log`
 
 ## Configuracao da classificacao de dataset
@@ -174,6 +211,18 @@ Em `config/vision_config.json`:
   "mode": "hardlink_or_copy",
   "valid_subdir": "raw/valid",
   "rejected_subdir": "raw/rejected"
+}
+```
+
+## Configuracao da persistencia remota
+
+Em `config/vision_config.json`:
+
+```json
+"remote_persistence": {
+  "enabled": true,
+  "db_table": "vision_pipeline_runs",
+  "storage_prefix": "vision/captures"
 }
 ```
 
@@ -199,32 +248,60 @@ Em `config/vision_config.json`:
 
 ```json
 {
-  "status": "quality_complete",
-  "image_path": "vision/storage/artifacts/2026/03/11/snapshot_20260311T173917217461Z.jpg",
-  "saved_result": "vision/storage/results/snapshot_20260311T173917217461Z_quality.json",
-  "quality_check": {
-    "status": "valid",
-    "dataset_eligible": true,
-    "metrics": {
-      "resolution": {
-        "width": 800,
-        "height": 600,
-        "total_pixels": 480000
-      },
-      "brightness_mean": 126.4,
-      "contrast_stddev": 38.2,
-      "sharpness_score": 19.6
+  "status": "pipeline_complete",
+  "saved_image": "vision/storage/artifacts/2026/03/11/snapshot_20260311T180715097539Z.jpg",
+  "saved_result": "vision/storage/results/snapshot_20260311T180715097539Z_result.json",
+  "result": {
+    "executed_at": "2026-03-11T18:07:15.127190+00:00",
+    "capture_metadata": {
+      "captured_at": "2026-03-11T18:07:15.097320+00:00",
+      "source": "esp32-cam",
+      "camera_url": "https://cam.cogumelos.net/capture",
+      "size_bytes": 33351
     },
-    "flags": {
-      "low_resolution": false,
-      "too_dark": false,
-      "too_bright": false,
-      "too_blurry": false,
-      "invalid_image": false
+    "quality_check": {
+      "status": "too_blurry",
+      "dataset_eligible": false
+    },
+    "dataset_classification": {
+      "dataset_class": "rejected/too_blurry"
+    },
+    "remote_persisted": false,
+    "storage_uploaded": false,
+    "db_record_created": false,
+    "remote_persistence": {
+      "image_storage_path": "vision/captures/2026/03/11/snapshot_20260311T180715097539Z.jpg",
+      "retry_manifest_path": "vision/storage/reprocess_queue/remote_retry_snapshot_....json",
+      "error": "missing SUPABASE_URL, SUPABASE_KEY or SUPABASE_STORAGE_BUCKET"
     }
   }
 }
 ```
+
+## Payload salvo na tabela remota
+
+Campos enviados:
+
+- `executed_at`
+- `captured_at`
+- `source`
+- `camera_url`
+- `image_local_path`
+- `image_storage_path`
+- `file_size`
+- `quality_status`
+- `dataset_eligible`
+- `dataset_class`
+- `brightness_mean`
+- `contrast_stddev`
+- `sharpness_score`
+- `summary_json`
+- `raw_result_json`
+- `dataset_classification_json`
+
+## Schema SQL sugerido
+
+Arquivo: [supabase_vision_pipeline_runs.sql](/Users/fabiodalponte/Workspace/shroom-app/vision/config/supabase_vision_pipeline_runs.sql)
 
 ## Proximos passos naturais
 

@@ -14,6 +14,7 @@ from .inference.pipeline import VisionInferencePipeline
 from .logging_utils import get_vision_logger
 from .storage.artifact_store import ArtifactStore
 from .storage.dataset_classifier import DatasetClassifier
+from .storage.remote_persistence import VisionRemotePersister
 
 
 class VisionOrchestrator:
@@ -26,6 +27,7 @@ class VisionOrchestrator:
         self.inference_pipeline = VisionInferencePipeline(config, logger=self.logger)
         self.artifact_store = ArtifactStore(config)
         self.dataset_classifier = DatasetClassifier(config, logger=self.logger)
+        self.remote_persister = VisionRemotePersister(config, logger=self.logger, artifact_store=self.artifact_store)
 
     def status(self) -> dict[str, Any]:
         """Return static runtime status without touching camera or model."""
@@ -40,6 +42,8 @@ class VisionOrchestrator:
             "mode": self.config.get("inference", {}).get("mode", "stub"),
             "quality_thresholds": self.inference_pipeline.quality_thresholds,
             "dataset_classification_enabled": self.dataset_classifier.enabled,
+            "remote_persistence_enabled": self.remote_persister.enabled,
+            "remote_env_ready": self.remote_persister.env_config.is_ready,
         }
 
     def capture_once(self) -> dict[str, Any]:
@@ -88,6 +92,15 @@ class VisionOrchestrator:
         )
         inference_result["dataset_classification"] = dataset_classification
         inference_result["summary"]["dataset_class"] = dataset_classification["dataset_class"]
+        remote_persistence = self.remote_persister.persist_pipeline_result_safe(
+            image_path=saved_image,
+            pipeline_result=inference_result,
+        )
+        inference_result["remote_persistence"] = remote_persistence
+        inference_result["remote_persisted"] = remote_persistence["remote_persisted"]
+        inference_result["storage_uploaded"] = remote_persistence["storage_uploaded"]
+        inference_result["db_record_created"] = remote_persistence["db_record_created"]
+        inference_result["summary"]["remote_persisted"] = remote_persistence["remote_persisted"]
 
         saved_result = self.artifact_store.save_inference_result(
             image_path=saved_image,

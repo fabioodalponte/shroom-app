@@ -16,8 +16,9 @@ class ArtifactStore:
         self.artifacts_dir = Path(storage_config.get("artifacts_dir", "vision/storage/artifacts"))
         self.results_dir = Path(storage_config.get("results_dir", "vision/storage/results"))
         self.dataset_dir = Path(storage_config.get("dataset_dir", "vision/dataset"))
+        self.reprocess_dir = Path(storage_config.get("reprocess_dir", "vision/storage/reprocess_queue"))
 
-        for directory in [self.artifacts_dir, self.results_dir, self.dataset_dir]:
+        for directory in [self.artifacts_dir, self.results_dir, self.dataset_dir, self.reprocess_dir]:
             directory.mkdir(parents=True, exist_ok=True)
 
     def save_snapshot(self, image_bytes: bytes, metadata: dict[str, Any]) -> Path:
@@ -58,3 +59,20 @@ class ArtifactStore:
             reverse=True,
         )
         return snapshots[0] if snapshots else None
+
+    def enqueue_remote_retry(
+        self,
+        image_path: Path,
+        pipeline_result: dict[str, Any],
+        remote_state: dict[str, Any],
+    ) -> Path:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        manifest_path = self.reprocess_dir / f"remote_retry_{image_path.stem}_{timestamp}.json"
+        payload = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "image_path": str(image_path),
+            "remote_state": remote_state,
+            "pipeline_result": pipeline_result,
+        }
+        manifest_path.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+        return manifest_path
