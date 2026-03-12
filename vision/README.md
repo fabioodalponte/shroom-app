@@ -328,11 +328,91 @@ Comando:
 python3 -m vision.runner scheduled-capture
 ```
 
-Exemplo de cron a cada 10 minutos:
+## Executando scheduled-capture com cron
+
+O cron roda com ambiente minimo. Para evitar falhas por env ausente, use o wrapper:
+
+`vision/scripts/run_scheduled_capture.sh`
+
+Ele:
+
+1. carrega as variaveis de `vision/config/.env.local`
+2. exporta automaticamente as variaveis
+3. garante a existencia de `vision/logs`
+4. executa `python3 -m vision.runner scheduled-capture`
+5. escreve a saida em `vision/logs/cron.log`
+
+Preparacao no Raspberry:
+
+1. copie o arquivo de exemplo:
+
+```bash
+cp /home/shroom/workspace/shroom-app/vision/config/.env.example /home/shroom/workspace/shroom-app/vision/config/.env.local
+```
+
+2. edite `vision/config/.env.local` com os valores reais:
+
+```bash
+nano /home/shroom/workspace/shroom-app/vision/config/.env.local
+```
+
+3. teste o wrapper manualmente:
+
+```bash
+/home/shroom/workspace/shroom-app/vision/scripts/run_scheduled_capture.sh
+```
+
+4. acompanhe o log:
+
+```bash
+tail -f /home/shroom/workspace/shroom-app/vision/logs/cron.log
+```
+
+Crontab:
+
+1. abra o crontab no Raspberry:
+
+```bash
+crontab -e
+```
+
+2. adicione esta linha:
 
 ```cron
-*/10 * * * * cd /caminho/para/shroom-app && /usr/bin/python3 -m vision.runner scheduled-capture
+*/10 * * * * /home/shroom/workspace/shroom-app/vision/scripts/run_scheduled_capture.sh
 ```
+
+3. confirme o agendamento:
+
+```bash
+crontab -l
+```
+
+Teste manual equivalente sem cron:
+
+```bash
+cd /home/shroom/workspace/shroom-app
+/home/shroom/workspace/shroom-app/vision/scripts/run_scheduled_capture.sh
+```
+
+Troubleshooting rapido:
+
+1. `bash: */10: No such file or directory`
+   Isso acontece quando a linha do cron e executada no shell. Use `crontab -e` e cole a linha la.
+
+2. `VISION_RELAY_API_TOKEN is required`
+   O arquivo `vision/config/.env.local` esta ausente ou incompleto. Garanta que ele contenha `VISION_RELAY_API_TOKEN=...`.
+
+3. `missing SUPABASE_URL, SUPABASE_KEY or SUPABASE_STORAGE_BUCKET`
+   O arquivo `vision/config/.env.local` nao contem as variaveis do Supabase. Preencha o bucket e as credenciais usadas pelo pipeline.
+
+4. `Permission denied` em `vision/logs/cron.log`
+   Garanta que o usuario `shroom` tenha permissao de escrita no diretorio `vision/logs`:
+
+   ```bash
+   mkdir -p /home/shroom/workspace/shroom-app/vision/logs
+   chmod u+rwX /home/shroom/workspace/shroom-app/vision/logs
+   ```
 
 ## Saidas esperadas
 
