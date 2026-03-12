@@ -6,6 +6,39 @@ import { useAuth } from '../../contexts/AuthContext';
 import { format, isToday, startOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
+interface DashboardLote {
+  id: string;
+  codigo_lote: string;
+  status?: string;
+  sala?: string;
+  temperatura_atual?: number | null;
+  umidade_atual?: number | null;
+  produto?: {
+    nome?: string;
+  } | null;
+}
+
+interface DashboardSensorMonitoramento {
+  id: string;
+  score_risco: number;
+  alertas: string[];
+  sensor_atual: {
+    temperatura: number;
+    umidade: number;
+    co2: number;
+    luminosidade_lux?: number;
+  };
+  limites_operacionais?: {
+    temperatura_min?: number;
+    temperatura_max?: number;
+    umidade_min?: number;
+    umidade_max?: number;
+    co2_ideal_max?: number;
+    luminosidade_min_lux?: number | null;
+    luminosidade_max_lux?: number | null;
+  } | null;
+}
+
 export function Dashboard() {
   const { usuario } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -16,8 +49,8 @@ export function Dashboard() {
     pedidosPendentes: 0,
     receitaMes: 0,
   });
-  const [lotes, setLotes] = useState([]);
-  const [alerts, setAlerts] = useState([]);
+  const [lotes, setLotes] = useState<DashboardLote[]>([]);
+  const [alerts, setAlerts] = useState<Array<{ severity: 'warning' | 'critical'; message: string }>>([]);
 
   useEffect(() => {
     loadDashboardData();
@@ -28,10 +61,14 @@ export function Dashboard() {
       setLoading(true);
 
       // Buscar lotes ativos
-      const { lotes: lotesData } = await fetchServer('/lotes');
-      setLotes(lotesData || []);
+      const [{ lotes: lotesData }, { sensores }] = await Promise.all([
+        fetchServer('/lotes'),
+        fetchServer('/sensores/latest?hours=24'),
+      ]);
+      const lotesNormalizados = (lotesData || []) as DashboardLote[];
+      setLotes(lotesNormalizados);
 
-      const lotesAtivos = lotesData?.filter(l => l.status === 'Em Cultivo' || l.status === 'Pronto').length || 0;
+      const lotesAtivos = lotesNormalizados?.filter(l => l.status === 'Em Cultivo' || l.status === 'Pronto').length || 0;
 
       // Buscar colheitas de hoje
       const { colheitas } = await fetchServer('/colheitas');
@@ -61,30 +98,22 @@ export function Dashboard() {
       });
 
       // Gerar alertas
-      const newAlerts = [];
-      lotesData?.forEach(lote => {
-        if (lote.temperatura_atual && lote.produto?.temperatura_ideal_min) {
-          if (lote.temperatura_atual < lote.produto.temperatura_ideal_min) {
-            newAlerts.push({
-              severity: 'critical',
-              message: `${lote.codigo_lote}: Temperatura baixa (${lote.temperatura_atual}°C)`
-            });
-          }
-          if (lote.temperatura_atual > lote.produto.temperatura_ideal_max) {
-            newAlerts.push({
-              severity: 'critical',
-              message: `${lote.codigo_lote}: Temperatura alta (${lote.temperatura_atual}°C)`
-            });
-          }
-        }
-        if (lote.umidade_atual && lote.produto?.umidade_ideal_min) {
-          if (lote.umidade_atual < lote.produto.umidade_ideal_min) {
-            newAlerts.push({
-              severity: 'warning',
-              message: `${lote.codigo_lote}: Umidade baixa (${lote.umidade_atual}%)`
-            });
-          }
-        }
+      const sensoresPorLote = new Map<string, DashboardSensorMonitoramento>(
+        ((sensores || []) as DashboardSensorMonitoramento[]).map((sensor) => [sensor.id, sensor]),
+      );
+
+      const newAlerts: Array<{ severity: 'warning' | 'critical'; message: string }> = [];
+      lotesNormalizados.forEach((lote) => {
+        const sensor = sensoresPorLote.get(lote.id);
+        if (!sensor?.alertas?.length) return;
+
+        const severity: 'warning' | 'critical' = sensor.score_risco >= 70 ? 'critical' : 'warning';
+        sensor.alertas.slice(0, 2).forEach((alerta) => {
+          newAlerts.push({
+            severity,
+            message: `${lote.codigo_lote}: ${alerta}`,
+          });
+        });
       });
 
       if (estoqueTotal < 50) {

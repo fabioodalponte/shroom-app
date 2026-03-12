@@ -10,6 +10,7 @@ export const FASES_OPERACIONAIS = [
   'esterilizacao',
   'inoculacao',
   'incubacao',
+  'pronto_para_frutificacao',
   'frutificacao',
   'colheita',
   'encerramento',
@@ -34,6 +35,39 @@ function faseOrNull(value: unknown): FaseOperacional | null {
     : null;
 }
 
+function toPositiveInteger(value: unknown): number | null {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function addDaysIso(baseIso: string, days: number) {
+  const baseDate = new Date(baseIso);
+  baseDate.setUTCDate(baseDate.getUTCDate() + days);
+  return baseDate.toISOString();
+}
+
+async function getProdutoPerfilCultivoByProdutoId(produtoId?: string | null) {
+  if (!produtoId) return null;
+
+  const { data, error } = await supabase
+    .from('produtos_perfis_cultivo')
+    .select('*')
+    .eq('produto_id', produtoId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+function resolveIncubacaoDiasPrevistos(perfilCultivo?: any | null) {
+  const incubacaoConfig = perfilCultivo?.parametros_fases_json?.incubacao || {};
+  return (
+    toPositiveInteger(incubacaoConfig?.dias_previstos) ||
+    toPositiveInteger(perfilCultivo?.ciclo_min_dias) ||
+    14
+  );
+}
+
 /**
  * LOTES
  */
@@ -42,7 +76,15 @@ export async function getLotes(filters?: { status?: string; sala?: string; fase_
     .from('lotes')
     .select(`
       *,
-      produto:produtos(*),
+      produto:produtos(
+        *,
+        perfil_cultivo:produtos_perfis_cultivo(
+          co2_ideal_max,
+          luminosidade_min_lux,
+          luminosidade_max_lux,
+          recomendacoes_json
+        )
+      ),
       responsavel:usuarios(id, nome, email),
       blocos:lotes_blocos(id, status_bloco, fase_operacional)
     `)
@@ -77,13 +119,16 @@ export async function createLote(loteData: any) {
   const nextNumber = (count.count || 0) + 1;
   const codigoLote = `LT-${year}-${String(nextNumber).padStart(3, '0')}`;
   
+  const faseAtual = faseOrNull(loteData?.fase_operacional) || 'esterilizacao';
+
   const { data, error } = await supabase
     .from('lotes')
     .insert({
       ...loteData,
       codigo_lote: codigoLote,
       qr_code: codigoLote, // Pode ser usado para gerar QR code depois
-      fase_operacional: faseOrNull(loteData?.fase_operacional) || 'esterilizacao',
+      fase_operacional: faseAtual,
+      fase_atual: faseAtual,
       fase_atualizada_em: new Date().toISOString(),
     })
     .select(`
@@ -111,9 +156,10 @@ export async function createLote(loteData: any) {
 
 export async function updateLote(id: string, updates: any) {
   const payload = { ...updates };
-  if (payload.fase_operacional) {
-    const fase = faseOrNull(payload.fase_operacional);
-    payload.fase_operacional = fase || payload.fase_operacional;
+  const faseNormalizada = faseOrNull(payload.fase_operacional ?? payload.fase_atual);
+  if (faseNormalizada) {
+    payload.fase_operacional = faseNormalizada;
+    payload.fase_atual = faseNormalizada;
     payload.fase_atualizada_em = new Date().toISOString();
   }
 
@@ -236,6 +282,10 @@ export async function createBlocosForLote(input: CreateBlocosInput) {
     throw new Error('Lote não encontrado');
   }
 
+  if (lote.data_inoculacao || ['incubacao', 'pronto_para_frutificacao', 'frutificacao', 'colheita', 'encerramento'].includes(String(lote.fase_operacional || ''))) {
+    throw new Error('Blocos novos só podem ser criados antes da inoculação do lote.');
+  }
+
   const quantidade = Math.max(1, Math.floor(Number(input.quantidade || 0)));
 
   const { count } = await supabase
@@ -281,12 +331,15 @@ interface UpdateLoteFaseInput {
   observacoes?: string | null;
   usuario_id?: string | null;
   detalhes?: Record<string, unknown>;
+  extra_updates?: Record<string, unknown>;
 }
 
 export async function updateLoteFase(input: UpdateLoteFaseInput) {
   const updates: Record<string, unknown> = {
     fase_operacional: input.fase_operacional,
+    fase_atual: input.fase_operacional,
     fase_atualizada_em: new Date().toISOString(),
+    ...(input.extra_updates || {}),
   };
 
   if (input.fase_operacional === 'colheita' && !updates.status) {
@@ -438,12 +491,33 @@ interface RegistrarInoculacaoInput {
 }
 
 export async function registrarInoculacao(input: RegistrarInoculacaoInput) {
-  const faseAtualizada = await updateLoteFase({
+  const loteAtual = await getLoteById(input.lote_id);
+  if (!loteAtual) {
+    throw new Error('Lote não encontrado');
+  }
+
+  if (loteAtual.data_inoculacao || ['incubacao', 'pronto_para_frutificacao', 'frutificacao', 'colheita', 'encerramento'].includes(String(loteAtual.fase_operacional || ''))) {
+    throw new Error('Este lote já passou pela inoculação e não pode ser inoculado novamente.');
+  }
+
+  const dataInoculacao = new Date().toISOString();
+  const perfilCultivo = await getProdutoPerfilCultivoByProdutoId(loteAtual.produto_id);
+  const diasPrevistosIncubacao = resolveIncubacaoDiasPrevistos(perfilCultivo);
+  const dataPrevistaFimIncubacao = addDaysIso(dataInoculacao, diasPrevistosIncubacao);
+
+  await createLoteEvento({
     lote_id: input.lote_id,
     fase_operacional: 'inoculacao',
-    observacoes: input.observacoes,
+    tipo_evento: 'inoculacao_registrada',
     usuario_id: input.usuario_id ?? null,
-    detalhes: { origem: 'operacao_inoculacao' },
+    detalhes: {
+      origem: 'operacao_inoculacao',
+      quantidade_blocos: input.quantidade_blocos,
+      peso_substrato_kg: input.peso_substrato_kg ?? null,
+      dias_previstos_incubacao: diasPrevistosIncubacao,
+      data_prevista_fim_incubacao: dataPrevistaFimIncubacao,
+      observacoes: input.observacoes || null,
+    },
   });
 
   const blocos = await createBlocosForLote({
@@ -459,7 +533,7 @@ export async function registrarInoculacao(input: RegistrarInoculacaoInput) {
     .update({
       status_bloco: 'incubacao',
       fase_operacional: 'incubacao',
-      data_incubacao: new Date().toISOString(),
+      data_incubacao: dataInoculacao,
     })
     .in('id', blocos.map((bloco) => bloco.id));
 
@@ -467,7 +541,7 @@ export async function registrarInoculacao(input: RegistrarInoculacaoInput) {
     throw updateBlocosError;
   }
 
-  await updateLoteFase({
+  const lote = await updateLoteFase({
     lote_id: input.lote_id,
     fase_operacional: 'incubacao',
     observacoes: 'Inoculação concluída e lote em incubação',
@@ -475,13 +549,75 @@ export async function registrarInoculacao(input: RegistrarInoculacaoInput) {
     detalhes: {
       blocos_criados: blocos.length,
       origem: 'operacao_inoculacao',
+      dias_previstos_incubacao: diasPrevistosIncubacao,
+      data_prevista_fim_incubacao: dataPrevistaFimIncubacao,
+    },
+    extra_updates: {
+      data_inoculacao: dataInoculacao,
+      data_prevista_fim_incubacao: dataPrevistaFimIncubacao,
+      data_real_fim_incubacao: null,
     },
   });
 
   return {
-    lote: faseAtualizada,
+    lote,
     blocos_criados: blocos.length,
+    dias_previstos_incubacao: diasPrevistosIncubacao,
+    data_prevista_fim_incubacao: dataPrevistaFimIncubacao,
   };
+}
+
+interface MarcarProntoParaFrutificacaoInput {
+  lote_id: string;
+  observacoes?: string | null;
+  usuario_id?: string | null;
+}
+
+export async function marcarLoteProntoParaFrutificacao(input: MarcarProntoParaFrutificacaoInput) {
+  const loteAtual = await getLoteById(input.lote_id);
+  if (!loteAtual) {
+    throw new Error('Lote não encontrado');
+  }
+
+  if (!loteAtual.data_inoculacao) {
+    throw new Error('O lote precisa ser inoculado antes de concluir a incubação.');
+  }
+
+  if (['frutificacao', 'colheita', 'encerramento'].includes(String(loteAtual.fase_operacional || ''))) {
+    throw new Error('O lote já avançou além da incubação.');
+  }
+
+  if (loteAtual.fase_operacional === 'pronto_para_frutificacao') {
+    return loteAtual;
+  }
+
+  const dataRealFimIncubacao = loteAtual.data_real_fim_incubacao || new Date().toISOString();
+  const lote = await updateLoteFase({
+    lote_id: input.lote_id,
+    fase_operacional: 'pronto_para_frutificacao',
+    observacoes: input.observacoes || 'Incubação concluída e lote pronto para frutificação',
+    usuario_id: input.usuario_id ?? null,
+    detalhes: {
+      origem: 'operacao_incubacao',
+      data_real_fim_incubacao: dataRealFimIncubacao,
+    },
+    extra_updates: {
+      data_real_fim_incubacao: dataRealFimIncubacao,
+    },
+  });
+
+  await createLoteEvento({
+    lote_id: input.lote_id,
+    fase_operacional: 'pronto_para_frutificacao',
+    tipo_evento: 'incubacao_concluida',
+    usuario_id: input.usuario_id ?? null,
+    detalhes: {
+      data_real_fim_incubacao: dataRealFimIncubacao,
+      observacoes: input.observacoes || null,
+    },
+  });
+
+  return lote;
 }
 
 interface RegistrarFrutificacaoInput {
@@ -492,8 +628,21 @@ interface RegistrarFrutificacaoInput {
 }
 
 export async function registrarFrutificacao(input: RegistrarFrutificacaoInput) {
+  const loteAtual = await getLoteById(input.lote_id);
+  if (!loteAtual) {
+    throw new Error('Lote não encontrado');
+  }
+
+  if (!loteAtual.data_inoculacao) {
+    throw new Error('O lote precisa ser inoculado antes de entrar em frutificação.');
+  }
+
+  if (!['incubacao', 'pronto_para_frutificacao'].includes(String(loteAtual.fase_operacional || ''))) {
+    throw new Error('Somente lotes em incubação ou prontos para frutificação podem avançar para frutificação.');
+  }
+
   const blocosDoLote = await getLoteBlocos(input.lote_id);
-  const elegiveis = blocosDoLote.filter((bloco) => ['inoculado', 'incubacao'].includes(String(bloco.status_bloco)));
+  const elegiveis = blocosDoLote.filter((bloco) => String(bloco.status_bloco) === 'incubacao');
 
   const requestedIds = (input.bloco_ids || []).filter(Boolean);
   const selecionados = requestedIds.length
@@ -526,6 +675,9 @@ export async function registrarFrutificacao(input: RegistrarFrutificacaoInput) {
     detalhes: {
       blocos_movidos: selectedIds.length,
       origem: 'operacao_frutificacao',
+    },
+    extra_updates: {
+      data_real_fim_incubacao: loteAtual.data_real_fim_incubacao || nowIso,
     },
   });
 
@@ -609,7 +761,13 @@ export async function createLeituraSensor(input: LeituraSensorInput) {
           temperatura_ideal_min,
           temperatura_ideal_max,
           umidade_ideal_min,
-          umidade_ideal_max
+          umidade_ideal_max,
+          perfil_cultivo:produtos_perfis_cultivo(
+            co2_ideal_max,
+            luminosidade_min_lux,
+            luminosidade_max_lux,
+            recomendacoes_json
+          )
         )
       )
     `)
@@ -655,7 +813,13 @@ export async function getLeiturasSensores(filters?: GetLeiturasSensoresFilters) 
           temperatura_ideal_min,
           temperatura_ideal_max,
           umidade_ideal_min,
-          umidade_ideal_max
+          umidade_ideal_max,
+          perfil_cultivo:produtos_perfis_cultivo(
+            co2_ideal_max,
+            luminosidade_min_lux,
+            luminosidade_max_lux,
+            recomendacoes_json
+          )
         )
       )
     `)
@@ -709,6 +873,26 @@ export async function createColheita(colheitaData: any) {
   const loteAtual = await getLoteById(dadosColheita.lote_id);
   if (!loteAtual) {
     throw new Error('Lote não encontrado para registrar colheita');
+  }
+
+  if (!['frutificacao', 'colheita'].includes(String(loteAtual.fase_operacional || ''))) {
+    throw new Error('A colheita só pode ser registrada para lotes em frutificação ou colheita.');
+  }
+
+  if (dadosColheita.bloco_id) {
+    const { data: blocoAtual, error: blocoError } = await supabase
+      .from('lotes_blocos')
+      .select('id, lote_id, status_bloco')
+      .eq('id', dadosColheita.bloco_id)
+      .maybeSingle();
+
+    if (blocoError) throw blocoError;
+    if (!blocoAtual || blocoAtual.lote_id !== dadosColheita.lote_id) {
+      throw new Error('Bloco inválido para o lote selecionado.');
+    }
+    if (String(blocoAtual.status_bloco) !== 'frutificacao') {
+      throw new Error('A colheita só pode ser registrada para blocos em frutificação.');
+    }
   }
 
   const faseRegistrada = faseOrNull(dadosColheita.fase_registrada || loteAtual.fase_operacional) || 'colheita';
@@ -789,15 +973,255 @@ export async function createColheita(colheitaData: any) {
 /**
  * PRODUTOS
  */
-export async function getProdutos() {
-  const { data, error } = await supabase
+type ProdutoCatalogOptions = {
+  includeInactive?: boolean;
+  includeInactiveTrainings?: boolean;
+};
+
+function normalizeProdutoCatalogRow(
+  produto: any,
+  perfilMap: Map<string, any>,
+  treinamentosMap: Map<string, any[]>,
+) {
+  return {
+    ...produto,
+    perfil_cultivo: perfilMap.get(produto.id) || null,
+    treinamentos: treinamentosMap.get(produto.id) || [],
+  };
+}
+
+async function hydrateProdutosCatalog(produtos: any[], options?: ProdutoCatalogOptions) {
+  if (!produtos.length) return [];
+
+  const produtoIds = produtos.map((produto) => produto.id);
+
+  let perfisQuery = supabase
+    .from('produtos_perfis_cultivo')
+    .select('*')
+    .in('produto_id', produtoIds);
+
+  if (!options?.includeInactive) {
+    perfisQuery = perfisQuery.eq('ativo', true);
+  }
+
+  let treinamentosQuery = supabase
+    .from('produtos_treinamentos')
+    .select('*')
+    .in('produto_id', produtoIds)
+    .order('ordem', { ascending: true })
+    .order('titulo', { ascending: true });
+
+  if (!options?.includeInactiveTrainings) {
+    treinamentosQuery = treinamentosQuery.eq('ativo', true);
+  }
+
+  const [{ data: perfis, error: perfisError }, { data: treinamentos, error: treinamentosError }] = await Promise.all([
+    perfisQuery,
+    treinamentosQuery,
+  ]);
+
+  if (perfisError) throw perfisError;
+  if (treinamentosError) throw treinamentosError;
+
+  const perfilMap = new Map<string, any>((perfis || []).map((perfil) => [perfil.produto_id, perfil]));
+  const treinamentosMap = new Map<string, any[]>();
+
+  for (const treinamento of treinamentos || []) {
+    const bucket = treinamentosMap.get(treinamento.produto_id) || [];
+    bucket.push(treinamento);
+    treinamentosMap.set(treinamento.produto_id, bucket);
+  }
+
+  return produtos.map((produto) => normalizeProdutoCatalogRow(produto, perfilMap, treinamentosMap));
+}
+
+export async function getProdutos(options?: ProdutoCatalogOptions) {
+  let query = supabase
     .from('produtos')
     .select('*')
-    .eq('ativo', true)
     .order('nome');
+
+  if (!options?.includeInactive) {
+    query = query.eq('ativo', true);
+  }
+
+  const { data, error } = await query;
+
+  if (error) throw error;
+  return hydrateProdutosCatalog(data || [], options);
+}
+
+export async function getProdutoByIdCatalogo(id: string, options?: ProdutoCatalogOptions) {
+  let query = supabase
+    .from('produtos')
+    .select('*')
+    .eq('id', id);
+
+  if (!options?.includeInactive) {
+    query = query.eq('ativo', true);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+
+  const hydrated = await hydrateProdutosCatalog([data], options);
+  return hydrated[0] || null;
+}
+
+export async function getProdutoTreinamentos(produtoId: string, options?: { includeInactive?: boolean }) {
+  let query = supabase
+    .from('produtos_treinamentos')
+    .select('*')
+    .eq('produto_id', produtoId)
+    .order('ordem', { ascending: true })
+    .order('titulo', { ascending: true });
+
+  if (!options?.includeInactive) {
+    query = query.eq('ativo', true);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+export async function createProduto(produtoData: any) {
+  const payload = {
+    nome: String(produtoData?.nome || '').trim(),
+    descricao: produtoData?.descricao || null,
+    variedade: produtoData?.variedade || null,
+    peso_medio_g: produtoData?.peso_medio_g ?? null,
+    preco_kg: produtoData?.preco_kg ?? null,
+    tempo_cultivo_dias: produtoData?.tempo_cultivo_dias ?? null,
+    temperatura_ideal_min: produtoData?.temperatura_ideal_min ?? null,
+    temperatura_ideal_max: produtoData?.temperatura_ideal_max ?? null,
+    umidade_ideal_min: produtoData?.umidade_ideal_min ?? null,
+    umidade_ideal_max: produtoData?.umidade_ideal_max ?? null,
+    ativo: produtoData?.ativo ?? true,
+  };
+
+  const { data, error } = await supabase
+    .from('produtos')
+    .insert(payload)
+    .select('id')
+    .single();
+
+  if (error) throw error;
+  return getProdutoByIdCatalogo(data.id, { includeInactive: true, includeInactiveTrainings: true });
+}
+
+export async function updateProduto(id: string, produtoData: any) {
+  const payload = {
+    nome: produtoData?.nome !== undefined ? String(produtoData.nome || '').trim() : undefined,
+    descricao: produtoData?.descricao !== undefined ? produtoData.descricao || null : undefined,
+    variedade: produtoData?.variedade !== undefined ? produtoData.variedade || null : undefined,
+    peso_medio_g: produtoData?.peso_medio_g !== undefined ? produtoData.peso_medio_g ?? null : undefined,
+    preco_kg: produtoData?.preco_kg !== undefined ? produtoData.preco_kg ?? null : undefined,
+    tempo_cultivo_dias: produtoData?.tempo_cultivo_dias !== undefined ? produtoData.tempo_cultivo_dias ?? null : undefined,
+    temperatura_ideal_min: produtoData?.temperatura_ideal_min !== undefined ? produtoData.temperatura_ideal_min ?? null : undefined,
+    temperatura_ideal_max: produtoData?.temperatura_ideal_max !== undefined ? produtoData.temperatura_ideal_max ?? null : undefined,
+    umidade_ideal_min: produtoData?.umidade_ideal_min !== undefined ? produtoData.umidade_ideal_min ?? null : undefined,
+    umidade_ideal_max: produtoData?.umidade_ideal_max !== undefined ? produtoData.umidade_ideal_max ?? null : undefined,
+    ativo: produtoData?.ativo !== undefined ? produtoData.ativo : undefined,
+  };
+
+  const cleanedPayload = Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined),
+  );
+
+  const { error } = await supabase
+    .from('produtos')
+    .update(cleanedPayload)
+    .eq('id', id);
+
+  if (error) throw error;
+  return getProdutoByIdCatalogo(id, { includeInactive: true, includeInactiveTrainings: true });
+}
+
+export async function upsertProdutoPerfil(produtoId: string, perfilData: any) {
+  const payload = {
+    produto_id: produtoId,
+    co2_ideal_max: perfilData?.co2_ideal_max ?? null,
+    luminosidade_min_lux: perfilData?.luminosidade_min_lux ?? null,
+    luminosidade_max_lux: perfilData?.luminosidade_max_lux ?? null,
+    ciclo_min_dias: perfilData?.ciclo_min_dias ?? null,
+    ciclo_max_dias: perfilData?.ciclo_max_dias ?? null,
+    parametros_fases_json: perfilData?.parametros_fases_json || {},
+    recomendacoes_json: perfilData?.recomendacoes_json || {},
+    observacoes: perfilData?.observacoes || null,
+    ativo: perfilData?.ativo ?? true,
+  };
+
+  const { data, error } = await supabase
+    .from('produtos_perfis_cultivo')
+    .upsert(payload, { onConflict: 'produto_id' })
+    .select('*')
+    .single();
 
   if (error) throw error;
   return data;
+}
+
+export async function createProdutoTreinamento(produtoId: string, treinamentoData: any) {
+  const payload = {
+    produto_id: produtoId,
+    slug: String(treinamentoData?.slug || '').trim(),
+    categoria: String(treinamentoData?.categoria || 'operacional').trim(),
+    titulo: String(treinamentoData?.titulo || '').trim(),
+    objetivo: treinamentoData?.objetivo || null,
+    conteudo_json: treinamentoData?.conteudo_json || {},
+    ordem: Number.isFinite(Number(treinamentoData?.ordem)) ? Number(treinamentoData.ordem) : 0,
+    ativo: treinamentoData?.ativo ?? true,
+  };
+
+  const { data, error } = await supabase
+    .from('produtos_treinamentos')
+    .insert(payload)
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function updateProdutoTreinamento(produtoId: string, treinamentoId: string, treinamentoData: any) {
+  const payload = {
+    slug: treinamentoData?.slug !== undefined ? String(treinamentoData.slug || '').trim() : undefined,
+    categoria: treinamentoData?.categoria !== undefined ? String(treinamentoData.categoria || 'operacional').trim() : undefined,
+    titulo: treinamentoData?.titulo !== undefined ? String(treinamentoData.titulo || '').trim() : undefined,
+    objetivo: treinamentoData?.objetivo !== undefined ? treinamentoData.objetivo || null : undefined,
+    conteudo_json: treinamentoData?.conteudo_json !== undefined ? treinamentoData.conteudo_json || {} : undefined,
+    ordem: treinamentoData?.ordem !== undefined ? (Number.isFinite(Number(treinamentoData.ordem)) ? Number(treinamentoData.ordem) : 0) : undefined,
+    ativo: treinamentoData?.ativo !== undefined ? treinamentoData.ativo : undefined,
+  };
+
+  const cleanedPayload = Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => value !== undefined),
+  );
+
+  const { data, error } = await supabase
+    .from('produtos_treinamentos')
+    .update(cleanedPayload)
+    .eq('id', treinamentoId)
+    .eq('produto_id', produtoId)
+    .select('*')
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteProdutoTreinamento(produtoId: string, treinamentoId: string) {
+  const { error } = await supabase
+    .from('produtos_treinamentos')
+    .delete()
+    .eq('id', treinamentoId)
+    .eq('produto_id', produtoId);
+
+  if (error) throw error;
+  return { success: true };
 }
 
 /**

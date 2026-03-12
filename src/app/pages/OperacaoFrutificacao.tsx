@@ -14,7 +14,7 @@ import { Textarea } from '../../components/ui/textarea';
 import { Badge } from '../../components/ui/badge';
 import { Checkbox } from '../../components/ui/checkbox';
 
-type FaseOperacional = 'esterilizacao' | 'inoculacao' | 'incubacao' | 'frutificacao' | 'colheita' | 'encerramento';
+type FaseOperacional = 'esterilizacao' | 'inoculacao' | 'incubacao' | 'pronto_para_frutificacao' | 'frutificacao' | 'colheita' | 'encerramento';
 
 interface LoteResumo {
   id: string;
@@ -22,6 +22,9 @@ interface LoteResumo {
   sala?: string;
   status?: string;
   fase_operacional?: FaseOperacional;
+  data_inoculacao?: string | null;
+  data_prevista_fim_incubacao?: string | null;
+  data_real_fim_incubacao?: string | null;
   produto?: {
     nome?: string;
   } | null;
@@ -67,6 +70,7 @@ const FASE_LABEL: Record<string, string> = {
   esterilizacao: 'Esterilização',
   inoculacao: 'Inoculação',
   incubacao: 'Incubação',
+  pronto_para_frutificacao: 'Pronto para Frutificação',
   frutificacao: 'Frutificação',
   colheita: 'Colheita',
   encerramento: 'Encerramento',
@@ -77,6 +81,8 @@ const EVENTO_LABEL: Record<string, string> = {
   lote_atualizado: 'Lote atualizado',
   blocos_criados: 'Blocos criados',
   fase_alterada: 'Fase alterada',
+  inoculacao_registrada: 'Inoculação registrada',
+  incubacao_concluida: 'Incubação concluída',
   consumo_insumo: 'Consumo de insumo',
   blocos_movidos_frutificacao: 'Blocos movidos para frutificação',
   colheita_registrada: 'Colheita registrada',
@@ -129,7 +135,10 @@ export function OperacaoFrutificacao() {
       }
 
       const lotesAtivos = ((lotesResult.value.lotes || []) as LoteResumo[])
-        .filter((lote) => lote.status !== 'Finalizado' && lote.fase_operacional !== 'encerramento')
+        .filter((lote) =>
+          lote.status !== 'Finalizado' &&
+          ['incubacao', 'pronto_para_frutificacao', 'frutificacao'].includes(String(lote.fase_operacional || '')),
+        )
         .sort((a, b) => a.codigo_lote.localeCompare(b.codigo_lote));
 
       setLotes(lotesAtivos);
@@ -173,7 +182,7 @@ export function OperacaoFrutificacao() {
       setBlocos(blocosLote);
       setEventos((eventosResult.eventos || []) as LoteEvento[]);
 
-      const elegiveis = blocosLote.filter((bloco) => ['inoculado', 'incubacao'].includes(bloco.status_bloco));
+      const elegiveis = blocosLote.filter((bloco) => bloco.status_bloco === 'incubacao');
       setBlocoIdsSelecionados(elegiveis.map((bloco) => bloco.id));
     } catch (error: any) {
       toast.error(error.message || 'Erro ao carregar blocos e eventos do lote');
@@ -199,7 +208,7 @@ export function OperacaoFrutificacao() {
   );
 
   const blocosElegiveis = useMemo(() => {
-    return blocos.filter((bloco) => ['inoculado', 'incubacao'].includes(bloco.status_bloco));
+    return blocos.filter((bloco) => bloco.status_bloco === 'incubacao');
   }, [blocos]);
 
   const resumoBlocos = useMemo(() => {
@@ -297,6 +306,34 @@ export function OperacaoFrutificacao() {
     }
   };
 
+  const handleMarcarProntoParaFrutificacao = async () => {
+    if (!loteSelecionado) {
+      toast.error('Selecione um lote para concluir a incubação.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await fetchServer(`/lotes/${loteSelecionado}/pronto-para-frutificacao`, {
+        method: 'POST',
+        body: JSON.stringify({
+          observacoes: observacoes?.trim() || undefined,
+        }),
+      });
+
+      toast.success('Lote marcado como pronto para frutificação.');
+
+      await Promise.all([
+        carregarBase(),
+        carregarDetalhesLote(loteSelecionado),
+      ]);
+    } catch (error: any) {
+      toast.error(error.message || 'Erro ao concluir a incubação');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -364,10 +401,35 @@ export function OperacaoFrutificacao() {
               <Button
                 className="bg-[#546A4A] hover:bg-[#45583C]"
                 onClick={() => void handleRegistrarFrutificacao()}
-                disabled={submitting || !loteSelecionado || blocosElegiveis.length === 0}
+                disabled={
+                  submitting ||
+                  !loteSelecionado ||
+                  blocosElegiveis.length === 0 ||
+                  blocoIdsSelecionados.length === 0 ||
+                  !['incubacao', 'pronto_para_frutificacao'].includes(String(loteAtual?.fase_operacional || ''))
+                }
               >
                 {submitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sprout className="w-4 h-4 mr-2" />}
                 Registrar frutificação
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="border-sky-200 bg-sky-50/60">
+            <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-medium text-sky-900">Transição de incubação</p>
+                <p className="text-xs text-sky-800/80">
+                  Use este avanço manual quando o lote concluir a colonização e estiver pronto para frutificar.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                className="border-sky-300 bg-white text-sky-900 hover:bg-sky-100"
+                onClick={() => void handleMarcarProntoParaFrutificacao()}
+                disabled={submitting || !loteSelecionado || !['incubacao', 'pronto_para_frutificacao'].includes(String(loteAtual?.fase_operacional || ''))}
+              >
+                Marcar pronto para frutificação
               </Button>
             </CardContent>
           </Card>
@@ -388,13 +450,13 @@ export function OperacaoFrutificacao() {
                     <div className="flex items-center justify-between rounded-md border p-3">
                       <div>
                         <p className="text-sm font-medium">Selecionar todos elegíveis</p>
-                        <p className="text-xs text-gray-500">Estados permitidos: inoculado e incubação</p>
+                        <p className="text-xs text-gray-500">Estados permitidos: blocos em incubação</p>
                       </div>
                       <Checkbox checked={todosElegiveisSelecionados} onCheckedChange={(checked) => toggleSelecionarTodos(Boolean(checked))} />
                     </div>
 
                     {blocosElegiveis.length === 0 ? (
-                      <p className="text-sm text-gray-500">Não há blocos em inoculação/incubação para avançar.</p>
+                      <p className="text-sm text-gray-500">Não há blocos em incubação para avançar.</p>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-72 overflow-auto pr-2">
                         {blocosElegiveis.map((bloco) => {
@@ -428,6 +490,34 @@ export function OperacaoFrutificacao() {
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">Fase atual</span>
                   <Badge variant="outline">{formatFase(loteAtual?.fase_operacional)}</Badge>
+                </div>
+                {loteAtual && !['incubacao', 'pronto_para_frutificacao', 'frutificacao'].includes(String(loteAtual.fase_operacional || '')) && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    Este lote ainda não está em incubação. Faça a inoculação antes de tentar iniciar a frutificação.
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Inoculação</span>
+                  <span className="font-medium">
+                    {loteAtual?.data_inoculacao ? format(new Date(loteAtual.data_inoculacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Fim incubação previsto</span>
+                  <span className="font-medium">
+                    {loteAtual?.data_prevista_fim_incubacao ? format(new Date(loteAtual.data_prevista_fim_incubacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                  </span>
+                </div>
+                {loteAtual?.data_prevista_fim_incubacao && !loteAtual?.data_real_fim_incubacao && new Date(loteAtual.data_prevista_fim_incubacao) < new Date() && (
+                  <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+                    Incubação acima da previsão. Revise colonização visual e avance somente se o lote estiver pronto para frutificação.
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-gray-500">Fim incubação real</span>
+                  <span className="font-medium">
+                    {loteAtual?.data_real_fim_incubacao ? format(new Date(loteAtual.data_real_fim_incubacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                  </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 pt-2">
                   <div className="rounded-md border p-2">

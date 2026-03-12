@@ -9,12 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { fetchServer } from '../../utils/supabase/client';
 import { format, differenceInDays } from 'date-fns';
 
-type FaseOperacional = 'esterilizacao' | 'inoculacao' | 'incubacao' | 'frutificacao' | 'colheita' | 'encerramento';
+type FaseOperacional = 'esterilizacao' | 'inoculacao' | 'incubacao' | 'pronto_para_frutificacao' | 'frutificacao' | 'colheita' | 'encerramento';
 
 const FASE_LABEL: Record<string, string> = {
   esterilizacao: 'Esterilização',
   inoculacao: 'Inoculação',
   incubacao: 'Incubação',
+  pronto_para_frutificacao: 'Pronto para Frutificação',
   frutificacao: 'Frutificação',
   colheita: 'Colheita',
   encerramento: 'Encerramento',
@@ -24,6 +25,7 @@ const FASE_BADGE: Record<string, string> = {
   esterilizacao: 'bg-slate-100 text-slate-700',
   inoculacao: 'bg-amber-100 text-amber-700',
   incubacao: 'bg-indigo-100 text-indigo-700',
+  pronto_para_frutificacao: 'bg-sky-100 text-sky-700',
   frutificacao: 'bg-emerald-100 text-emerald-700',
   colheita: 'bg-lime-100 text-lime-700',
   encerramento: 'bg-gray-100 text-gray-600',
@@ -34,6 +36,10 @@ interface LoteItem {
   codigo_lote: string;
   status?: string;
   fase_operacional?: FaseOperacional;
+  fase_atual?: FaseOperacional;
+  data_inoculacao?: string | null;
+  data_prevista_fim_incubacao?: string | null;
+  data_real_fim_incubacao?: string | null;
   data_inicio: string;
   sala?: string;
   temperatura_atual?: number | null;
@@ -113,10 +119,17 @@ export function Lotes() {
   }, [lotes, searchTerm, statusFilter, faseFilter]);
 
   const resumo = useMemo(() => {
+    const agora = new Date();
     return {
       cultivo: lotes.filter((lote) => lote.status === 'Em Cultivo').length,
       incubacao: lotes.filter((lote) => lote.fase_operacional === 'incubacao').length,
+      prontoParaFrutificacao: lotes.filter((lote) => lote.fase_operacional === 'pronto_para_frutificacao').length,
       frutificacao: lotes.filter((lote) => lote.fase_operacional === 'frutificacao').length,
+      atrasados: lotes.filter((lote) => {
+        if (!['incubacao', 'pronto_para_frutificacao'].includes(String(lote.fase_operacional || ''))) return false;
+        if (!lote.data_prevista_fim_incubacao || lote.data_real_fim_incubacao) return false;
+        return new Date(lote.data_prevista_fim_incubacao) < agora;
+      }).length,
       totalBlocos: lotes.reduce((acc, lote) => acc + (lote.blocos?.length || 0), 0),
     };
   }, [lotes]);
@@ -184,6 +197,7 @@ export function Lotes() {
                 <SelectItem value="esterilizacao">Esterilização</SelectItem>
                 <SelectItem value="inoculacao">Inoculação</SelectItem>
                 <SelectItem value="incubacao">Incubação</SelectItem>
+                <SelectItem value="pronto_para_frutificacao">Pronto para Frutificação</SelectItem>
                 <SelectItem value="frutificacao">Frutificação</SelectItem>
                 <SelectItem value="colheita">Colheita</SelectItem>
                 <SelectItem value="encerramento">Encerramento</SelectItem>
@@ -217,6 +231,14 @@ export function Lotes() {
             const diasDesdeInicio = differenceInDays(new Date(), new Date(lote.data_inicio));
             const totalBlocos = lote.blocos?.length || 0;
             const blocosFrutificacao = (lote.blocos || []).filter((bloco) => bloco.status_bloco === 'frutificacao').length;
+            const fimIncubacaoPrevisto = lote.data_prevista_fim_incubacao ? new Date(lote.data_prevista_fim_incubacao) : null;
+            const fimIncubacaoReal = lote.data_real_fim_incubacao ? new Date(lote.data_real_fim_incubacao) : null;
+            const incubacaoAtrasada = Boolean(
+              fimIncubacaoPrevisto &&
+              !fimIncubacaoReal &&
+              ['incubacao', 'pronto_para_frutificacao'].includes(String(lote.fase_operacional || '')) &&
+              fimIncubacaoPrevisto < new Date(),
+            );
 
             return (
               <Link key={lote.id} to={`/lotes/${lote.id}`}>
@@ -235,6 +257,9 @@ export function Lotes() {
                       <Badge className={FASE_BADGE[lote.fase_operacional || ''] || 'bg-gray-100 text-gray-600'}>
                         {formatFase(lote.fase_operacional)}
                       </Badge>
+                      {incubacaoAtrasada && (
+                        <Badge className="bg-rose-100 text-rose-700">Incubação atrasada</Badge>
+                      )}
                     </div>
 
                     <div className="space-y-3 mb-4">
@@ -264,6 +289,27 @@ export function Lotes() {
                         <span className="text-gray-600">Dias:</span>
                         <span className="font-medium">{diasDesdeInicio} dias</span>
                       </div>
+
+                      {lote.data_inoculacao && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Inoculação:</span>
+                          <span className="font-medium">{format(new Date(lote.data_inoculacao), 'dd/MM/yyyy')}</span>
+                        </div>
+                      )}
+
+                      {fimIncubacaoPrevisto && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Fim incubação prev.:</span>
+                          <span className="font-medium">{format(fimIncubacaoPrevisto, 'dd/MM/yyyy')}</span>
+                        </div>
+                      )}
+
+                      {fimIncubacaoReal && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-600">Incubação concluída:</span>
+                          <span className="font-medium">{format(fimIncubacaoReal, 'dd/MM/yyyy')}</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between pt-4 border-t">
@@ -280,7 +326,7 @@ export function Lotes() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         <Card>
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold text-blue-600">{resumo.cultivo}</p>
@@ -295,8 +341,20 @@ export function Lotes() {
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
+            <p className="text-2xl font-bold text-sky-600">{resumo.prontoParaFrutificacao}</p>
+            <p className="text-sm text-gray-600">Prontos p/ Frutificar</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold text-emerald-600">{resumo.frutificacao}</p>
             <p className="text-sm text-gray-600">Frutificação</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <p className="text-2xl font-bold text-rose-600">{resumo.atrasados}</p>
+            <p className="text-sm text-gray-600">Atrasados</p>
           </CardContent>
         </Card>
         <Card>

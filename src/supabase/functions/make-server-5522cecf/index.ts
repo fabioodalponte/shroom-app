@@ -10,6 +10,10 @@ const isAdminUser = (user: any) => String(user?.tipo_usuario || '').toLowerCase(
 const SENSOR_INGEST_HEADER = 'x-sensores-key';
 const CONTROLADOR_REQUEST_TIMEOUT_MS = 8000;
 
+function isTruthy(value: string | null | undefined) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
 function normalizeBaseUrl(value: unknown) {
   return String(value || '').trim().replace(/\/+$/, '');
 }
@@ -126,55 +130,117 @@ function clampHours(value: string | null, fallback = 24) {
   return Math.max(1, Math.min(parsed, 24 * 7));
 }
 
+function roundThreshold(value: number, step = 50) {
+  return Math.round(value / step) * step;
+}
+
 function calculateRisk(
-  atual: { temperatura: number; umidade: number; co2: number },
+  atual: { temperatura: number; umidade: number; co2: number; luminosidade?: number | null },
   produto?: {
     temperatura_ideal_min?: number | null;
     temperatura_ideal_max?: number | null;
     umidade_ideal_min?: number | null;
     umidade_ideal_max?: number | null;
+    perfil_cultivo?: {
+      co2_ideal_max?: number | null;
+      luminosidade_min_lux?: number | null;
+      luminosidade_max_lux?: number | null;
+      recomendacoes_json?: {
+        resumo?: string;
+        alertas?: string[];
+      } | null;
+    } | null;
   } | null,
 ) {
   const alertas: string[] = [];
+  const recomendacoes = new Set<string>();
   let score = 0;
 
   const tempMin = parseNumber(produto?.temperatura_ideal_min) ?? 20;
   const tempMax = parseNumber(produto?.temperatura_ideal_max) ?? 26;
   const umidMin = parseNumber(produto?.umidade_ideal_min) ?? 80;
   const umidMax = parseNumber(produto?.umidade_ideal_max) ?? 90;
+  const co2IdealMax = parseNumber(produto?.perfil_cultivo?.co2_ideal_max);
+  const lumMin = parseNumber(produto?.perfil_cultivo?.luminosidade_min_lux);
+  const lumMax = parseNumber(produto?.perfil_cultivo?.luminosidade_max_lux);
+
+  const co2Atencao = co2IdealMax ?? 1200;
+  const co2Elevado = co2IdealMax ? roundThreshold(co2IdealMax * 1.2) : 1500;
+  const co2Critico = co2IdealMax ? roundThreshold(co2IdealMax * 1.5) : 2000;
 
   if (atual.temperatura < tempMin) {
     score += 25;
     alertas.push(`Temperatura abaixo do ideal (${atual.temperatura.toFixed(1)}°C)`);
+    recomendacoes.add(`Ajustar climatização para retornar acima de ${tempMin.toFixed(1)}°C.`);
   }
   if (atual.temperatura > tempMax) {
     score += 25;
     alertas.push(`Temperatura acima do ideal (${atual.temperatura.toFixed(1)}°C)`);
+    recomendacoes.add(`Reduzir a temperatura para permanecer abaixo de ${tempMax.toFixed(1)}°C.`);
   }
 
   if (atual.umidade < umidMin) {
     score += 20;
     alertas.push(`Umidade abaixo do ideal (${atual.umidade.toFixed(0)}%)`);
+    recomendacoes.add(`Elevar umidificação até pelo menos ${umidMin.toFixed(0)}%.`);
   }
   if (atual.umidade > umidMax) {
     score += 20;
     alertas.push(`Umidade acima do ideal (${atual.umidade.toFixed(0)}%)`);
+    recomendacoes.add(`Reduzir umidade para abaixo de ${umidMax.toFixed(0)}% e reforçar circulação de ar.`);
   }
 
-  if (atual.co2 > 2000) {
+  if (atual.co2 > co2Critico) {
     score += 35;
     alertas.push(`CO2 crítico (${atual.co2.toFixed(0)} ppm)`);
-  } else if (atual.co2 > 1500) {
+    recomendacoes.add(`Aumentar ventilação imediatamente e retornar o CO2 para abaixo de ${co2Atencao.toFixed(0)} ppm.`);
+  } else if (atual.co2 > co2Elevado) {
     score += 25;
     alertas.push(`CO2 elevado (${atual.co2.toFixed(0)} ppm)`);
-  } else if (atual.co2 > 1200) {
+    recomendacoes.add(`Revisar exaustão e ventilação para aproximar o CO2 de ${co2Atencao.toFixed(0)} ppm.`);
+  } else if (atual.co2 > co2Atencao) {
     score += 10;
     alertas.push(`CO2 em atenção (${atual.co2.toFixed(0)} ppm)`);
+    recomendacoes.add(`Monitorar troca de ar; referência atual do produto: até ${co2Atencao.toFixed(0)} ppm.`);
+  }
+
+  if (typeof atual.luminosidade === 'number' && lumMin !== null && atual.luminosidade < lumMin) {
+    score += 10;
+    alertas.push(`Luminosidade abaixo do ideal (${atual.luminosidade.toFixed(0)} lux)`);
+    recomendacoes.add(`Ajustar iluminação para pelo menos ${lumMin.toFixed(0)} lux.`);
+  }
+  if (typeof atual.luminosidade === 'number' && lumMax !== null && atual.luminosidade > lumMax) {
+    score += 10;
+    alertas.push(`Luminosidade acima do ideal (${atual.luminosidade.toFixed(0)} lux)`);
+    recomendacoes.add(`Reduzir iluminação para abaixo de ${lumMax.toFixed(0)} lux.`);
+  }
+
+  const recomendacoesDoPerfil = Array.isArray(produto?.perfil_cultivo?.recomendacoes_json?.alertas)
+    ? produto?.perfil_cultivo?.recomendacoes_json?.alertas
+    : [];
+
+  for (const recomendacao of recomendacoesDoPerfil) {
+    if (typeof recomendacao === 'string' && recomendacao.trim()) {
+      recomendacoes.add(recomendacao.trim());
+    }
   }
 
   return {
     score: Math.min(100, score),
     alertas,
+    limites: {
+      temperatura_min: tempMin,
+      temperatura_max: tempMax,
+      umidade_min: umidMin,
+      umidade_max: umidMax,
+      co2_ideal_max: co2Atencao,
+      co2_elevado: co2Elevado,
+      co2_critico: co2Critico,
+      luminosidade_min_lux: lumMin,
+      luminosidade_max_lux: lumMax,
+    },
+    recomendacoes: Array.from(recomendacoes),
+    resumo_recomendacoes: produto?.perfil_cultivo?.recomendacoes_json?.resumo || null,
   };
 }
 
@@ -354,6 +420,7 @@ app.get("/make-server-5522cecf/sensores/latest", async (c) => {
         temperatura: parseNumber(leitura.temperatura) ?? 0,
         umidade: parseNumber(leitura.umidade) ?? 0,
         co2: parseNumber(leitura.co2_ppm) ?? 0,
+        luminosidade_lux: parseNumber(leitura.luminosidade_lux) ?? undefined,
       });
     }
 
@@ -369,6 +436,7 @@ app.get("/make-server-5522cecf/sensores/latest", async (c) => {
         temperatura: 0,
         umidade: 0,
         co2: 0,
+        luminosidade_lux: undefined,
       };
 
       const risco = calculateRisk(
@@ -376,6 +444,7 @@ app.get("/make-server-5522cecf/sensores/latest", async (c) => {
           temperatura: sensorAtual.temperatura,
           umidade: sensorAtual.umidade,
           co2: sensorAtual.co2,
+          luminosidade: sensorAtual.luminosidade_lux,
         },
         item.produto,
       );
@@ -389,10 +458,15 @@ app.get("/make-server-5522cecf/sensores/latest", async (c) => {
           temperatura: sensorAtual.temperatura,
           umidade: sensorAtual.umidade,
           co2: sensorAtual.co2,
+          luminosidade_lux: sensorAtual.luminosidade_lux,
         },
         historico,
         score_risco: risco.score,
         alertas: risco.alertas,
+        limites_operacionais: risco.limites,
+        recomendacoes_operacionais: risco.recomendacoes,
+        resumo_recomendacoes: risco.resumo_recomendacoes,
+        produto: item.produto || null,
         blocos_resumo: blocosResumoPorLote.get(item.id) || { total: 0, frutificacao: 0, colhido: 0 },
       };
     });
@@ -657,7 +731,7 @@ app.patch("/make-server-5522cecf/lotes/:id/fase", async (c) => {
     const loteId = c.req.param('id');
     const body = await c.req.json();
     const fase = String(body.fase_operacional || '').trim().toLowerCase();
-    const fasesValidas = new Set(['esterilizacao', 'inoculacao', 'incubacao', 'frutificacao', 'colheita', 'encerramento']);
+    const fasesValidas = new Set(['esterilizacao', 'inoculacao', 'incubacao', 'pronto_para_frutificacao', 'frutificacao', 'colheita', 'encerramento']);
 
     if (!fasesValidas.has(fase)) {
       return c.json({ error: 'fase_operacional inválida' }, 400);
@@ -674,6 +748,27 @@ app.patch("/make-server-5522cecf/lotes/:id/fase", async (c) => {
     return c.json({ lote });
   } catch (error) {
     console.error('Erro ao atualizar fase do lote:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.post("/make-server-5522cecf/lotes/:id/pronto-para-frutificacao", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const user = await auth.requireAuth(accessToken ?? null);
+
+    const loteId = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
+
+    const lote = await db.marcarLoteProntoParaFrutificacao({
+      lote_id: loteId,
+      observacoes: String(body?.observacoes || '').trim() || null,
+      usuario_id: user.id,
+    });
+
+    return c.json({ lote });
+  } catch (error) {
+    console.error('Erro ao marcar lote como pronto para frutificação:', error);
     return c.json({ error: error.message }, 500);
   }
 });
@@ -881,11 +976,190 @@ app.get("/make-server-5522cecf/produtos", async (c) => {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     await auth.requireAuth(accessToken ?? null);
 
-    const produtos = await db.getProdutos();
+    const produtos = await db.getProdutos({
+      includeInactive: isTruthy(c.req.query('include_inactive')),
+      includeInactiveTrainings: isTruthy(c.req.query('include_inactive_trainings')),
+    });
     return c.json({ produtos });
 
   } catch (error) {
     console.error('Erro ao buscar produtos:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.get("/make-server-5522cecf/produtos/:id/treinamentos", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const treinamentos = await db.getProdutoTreinamentos(c.req.param('id'), {
+      includeInactive: isTruthy(c.req.query('include_inactive')),
+    });
+
+    return c.json({ treinamentos });
+  } catch (error) {
+    console.error('Erro ao buscar treinamentos do produto:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.get("/make-server-5522cecf/produtos/:id", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const produto = await db.getProdutoByIdCatalogo(c.req.param('id'), {
+      includeInactive: isTruthy(c.req.query('include_inactive')),
+      includeInactiveTrainings: isTruthy(c.req.query('include_inactive_trainings')),
+    });
+
+    if (!produto) {
+      return c.json({ error: 'Produto não encontrado' }, 404);
+    }
+
+    return c.json({ produto });
+  } catch (error) {
+    console.error('Erro ao buscar produto:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.post("/make-server-5522cecf/produtos", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const actor = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(actor)) {
+      return c.json({ error: 'Apenas administradores podem criar produtos.' }, 403);
+    }
+
+    const body = await c.req.json();
+    if (!String(body?.nome || '').trim()) {
+      return c.json({ error: 'Campo obrigatório: nome' }, 400);
+    }
+
+    const produto = await db.createProduto(body);
+    return c.json({ produto }, 201);
+  } catch (error) {
+    console.error('Erro ao criar produto:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.put("/make-server-5522cecf/produtos/:id", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const actor = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(actor)) {
+      return c.json({ error: 'Apenas administradores podem atualizar produtos.' }, 403);
+    }
+
+    const body = await c.req.json();
+    if (body?.nome !== undefined && !String(body.nome || '').trim()) {
+      return c.json({ error: 'Campo nome não pode ser vazio' }, 400);
+    }
+
+    const produto = await db.updateProduto(c.req.param('id'), body);
+    if (!produto) {
+      return c.json({ error: 'Produto não encontrado' }, 404);
+    }
+
+    return c.json({ produto });
+  } catch (error) {
+    console.error('Erro ao atualizar produto:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.put("/make-server-5522cecf/produtos/:id/perfil", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const actor = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(actor)) {
+      return c.json({ error: 'Apenas administradores podem atualizar perfis de cultivo.' }, 403);
+    }
+
+    const body = await c.req.json();
+    const perfil = await db.upsertProdutoPerfil(c.req.param('id'), body);
+    return c.json({ perfil });
+  } catch (error) {
+    console.error('Erro ao salvar perfil de cultivo:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.post("/make-server-5522cecf/produtos/:id/treinamentos", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const actor = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(actor)) {
+      return c.json({ error: 'Apenas administradores podem criar treinamentos de produto.' }, 403);
+    }
+
+    const body = await c.req.json();
+    if (!String(body?.slug || '').trim() || !String(body?.titulo || '').trim()) {
+      return c.json({ error: 'Campos obrigatórios: slug e titulo' }, 400);
+    }
+
+    const treinamento = await db.createProdutoTreinamento(c.req.param('id'), body);
+    return c.json({ treinamento }, 201);
+  } catch (error) {
+    console.error('Erro ao criar treinamento do produto:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.put("/make-server-5522cecf/produtos/:id/treinamentos/:treinamentoId", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const actor = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(actor)) {
+      return c.json({ error: 'Apenas administradores podem atualizar treinamentos de produto.' }, 403);
+    }
+
+    const body = await c.req.json();
+    if (body?.slug !== undefined && !String(body.slug || '').trim()) {
+      return c.json({ error: 'Campo slug não pode ser vazio' }, 400);
+    }
+    if (body?.titulo !== undefined && !String(body.titulo || '').trim()) {
+      return c.json({ error: 'Campo titulo não pode ser vazio' }, 400);
+    }
+
+    const treinamento = await db.updateProdutoTreinamento(
+      c.req.param('id'),
+      c.req.param('treinamentoId'),
+      body,
+    );
+
+    if (!treinamento) {
+      return c.json({ error: 'Treinamento do produto não encontrado' }, 404);
+    }
+
+    return c.json({ treinamento });
+  } catch (error) {
+    console.error('Erro ao atualizar treinamento do produto:', error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+app.delete("/make-server-5522cecf/produtos/:id/treinamentos/:treinamentoId", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const actor = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(actor)) {
+      return c.json({ error: 'Apenas administradores podem remover treinamentos de produto.' }, 403);
+    }
+
+    await db.deleteProdutoTreinamento(c.req.param('id'), c.req.param('treinamentoId'));
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Erro ao remover treinamento do produto:', error);
     return c.json({ error: error.message }, 500);
   }
 });

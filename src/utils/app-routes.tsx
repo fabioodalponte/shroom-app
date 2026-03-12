@@ -24,6 +24,7 @@ import { Vision } from "../app/pages/Vision";
 import { Debug } from "../app/pages/Debug";
 import { OperacaoInoculacao } from "../app/pages/OperacaoInoculacao";
 import { OperacaoFrutificacao } from "../app/pages/OperacaoFrutificacao";
+import { CatalogoCogumelos } from "../app/pages/CatalogoCogumelos";
 
 export const router = createBrowserRouter([
   {
@@ -105,6 +106,10 @@ export const router = createBrowserRouter([
       {
         path: "vision",
         Component: Vision,
+      },
+      {
+        path: "catalogo-cogumelos",
+        Component: CatalogoCogumelos,
       },
       {
         path: "operacao/inoculacao",

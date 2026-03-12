@@ -35,6 +35,7 @@ interface SensorData {
   temperatura: number;
   umidade: number;
   co2: number;
+  luminosidade_lux?: number;
   pm25?: number;
   pm10?: number;
 }
@@ -44,12 +45,41 @@ interface LoteMonitoramento {
   codigo_lote: string;
   sala: string;
   fase_operacional?: string | null;
+  data_inoculacao?: string | null;
+  data_prevista_fim_incubacao?: string | null;
+  data_real_fim_incubacao?: string | null;
   sensor_atual: {
     temperatura: number;
     umidade: number;
     co2: number;
+    luminosidade_lux?: number;
     pm25?: number;
   };
+  produto?: {
+    nome?: string;
+    perfil_cultivo?: {
+      co2_ideal_max?: number | null;
+      luminosidade_min_lux?: number | null;
+      luminosidade_max_lux?: number | null;
+      recomendacoes_json?: {
+        resumo?: string;
+        alertas?: string[];
+      } | null;
+    } | null;
+  } | null;
+  limites_operacionais?: {
+    temperatura_min?: number;
+    temperatura_max?: number;
+    umidade_min?: number;
+    umidade_max?: number;
+    co2_ideal_max?: number;
+    co2_elevado?: number;
+    co2_critico?: number;
+    luminosidade_min_lux?: number | null;
+    luminosidade_max_lux?: number | null;
+  } | null;
+  recomendacoes_operacionais?: string[];
+  resumo_recomendacoes?: string | null;
   blocos_resumo?: {
     total: number;
     frutificacao: number;
@@ -153,6 +183,7 @@ function formatFaseLabel(fase?: string | null) {
     esterilizacao: 'Esterilização',
     inoculacao: 'Inoculação',
     incubacao: 'Incubação',
+    pronto_para_frutificacao: 'Pronto para Frutificação',
     frutificacao: 'Frutificação',
     colheita: 'Colheita',
     encerramento: 'Encerramento',
@@ -185,6 +216,11 @@ function buildCameraImageUrl(url: string, token: number, options?: { flash?: boo
 function clampNumber(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
   return Math.max(min, Math.min(max, value));
+}
+
+function formatIdealRange(min?: number | null, max?: number | null, suffix = '') {
+  if (min === null || min === undefined || max === null || max === undefined) return null;
+  return `${min}-${max}${suffix}`;
 }
 
 function normalizeCameraControls(payload: Record<string, any> | null | undefined): CameraImageControls {
@@ -824,6 +860,48 @@ export function Seguranca() {
     ? lotes 
     : lotes.filter(l => l.id === loteSelecionado);
 
+  const recomendacoesOperacionais = useMemo(() => {
+    const itens = new Set<string>();
+    let resumo: string | null = null;
+
+    for (const lote of lotesFiltrados) {
+      if (!resumo && lote.resumo_recomendacoes) {
+        resumo = lote.resumo_recomendacoes;
+      }
+
+      for (const recomendacao of lote.recomendacoes_operacionais || []) {
+        if (recomendacao?.trim()) {
+          itens.add(recomendacao.trim());
+        }
+      }
+    }
+
+    if (!itens.size) {
+      itens.add('Score de risco alto: isolar lote, revisar visualmente e confirmar parâmetros ambientais do produto.');
+      itens.add('CO₂ acima do limite ideal: aumentar ventilação e revisar exaustão da sala.');
+      itens.add('Umidade acima do limite ideal: reduzir nebulização e reforçar circulação de ar.');
+    }
+
+    return {
+      resumo,
+      itens: Array.from(itens).slice(0, 6),
+    };
+  }, [lotesFiltrados]);
+
+  const resumoOperacional = useMemo(() => {
+    const agora = new Date();
+    return {
+      incubando: lotes.filter((lote) => lote.fase_operacional === 'incubacao').length,
+      prontosParaFrutificacao: lotes.filter((lote) => lote.fase_operacional === 'pronto_para_frutificacao').length,
+      frutificando: lotes.filter((lote) => lote.fase_operacional === 'frutificacao').length,
+      atrasados: lotes.filter((lote) => {
+        if (!['incubacao', 'pronto_para_frutificacao'].includes(String(lote.fase_operacional || ''))) return false;
+        if (!lote.data_prevista_fim_incubacao || lote.data_real_fim_incubacao) return false;
+        return new Date(lote.data_prevista_fim_incubacao) < agora;
+      }).length,
+    };
+  }, [lotes]);
+
   // Calcular médias gerais
   const mediaTemp = lotes.length > 0 ? lotes.reduce((acc, l) => acc + l.sensor_atual.temperatura, 0) / lotes.length : 0;
   const mediaUmid = lotes.length > 0 ? lotes.reduce((acc, l) => acc + l.sensor_atual.umidade, 0) / lotes.length : 0;
@@ -1219,14 +1297,87 @@ export function Seguranca() {
         </Card>
       </div>
 
+      {/* Resumo Operacional de Fases */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-600">Incubando</p>
+                <p className="text-2xl font-bold text-indigo-600 mt-1">
+                  {resumoOperacional.incubando}
+                </p>
+              </div>
+              <Activity className="w-8 h-8 text-indigo-600 opacity-20" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-600">Prontos p/ Frutificação</p>
+                <p className="text-2xl font-bold text-sky-600 mt-1">
+                  {resumoOperacional.prontosParaFrutificacao}
+                </p>
+              </div>
+              <TrendingUp className="w-8 h-8 text-sky-600 opacity-20" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-600">Frutificando</p>
+                <p className="text-2xl font-bold text-emerald-600 mt-1">
+                  {resumoOperacional.frutificando}
+                </p>
+              </div>
+              <Radio className="w-8 h-8 text-emerald-600 opacity-20" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-rose-300">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-rose-700">Incubação Atrasada</p>
+                <p className="text-2xl font-bold text-rose-600 mt-1">
+                  {resumoOperacional.atrasados}
+                </p>
+              </div>
+              <AlertTriangle className="w-8 h-8 text-rose-600 opacity-20" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
 	      {/* Painel de Lotes com Score de Risco */}
 	      {lotesFiltrados.map(lote => {
 	        const risco = getRiscoColor(lote.score_risco);
-	        const tendTemp = getTendencia(lote.sensor_atual.temperatura, 22, 2);
-	        const tendUmid = getTendencia(lote.sensor_atual.umidade, 85, 5);
-	        const tendCo2 = getTendencia(lote.sensor_atual.co2, 1000, 200);
-          const cameraLote = getCameraForLote(lote);
-          const controladorLote = getControladorForLote(lote);
+            const tempMin = lote.limites_operacionais?.temperatura_min ?? 20;
+            const tempMax = lote.limites_operacionais?.temperatura_max ?? 25;
+            const umidMin = lote.limites_operacionais?.umidade_min ?? 80;
+            const umidMax = lote.limites_operacionais?.umidade_max ?? 90;
+            const co2IdealMax = lote.limites_operacionais?.co2_ideal_max ?? 1000;
+            const lumMin = lote.limites_operacionais?.luminosidade_min_lux ?? null;
+            const lumMax = lote.limites_operacionais?.luminosidade_max_lux ?? null;
+
+		        const tendTemp = getTendencia(lote.sensor_atual.temperatura, (tempMin + tempMax) / 2, Math.max((tempMax - tempMin) / 2, 1));
+		        const tendUmid = getTendencia(lote.sensor_atual.umidade, (umidMin + umidMax) / 2, Math.max((umidMax - umidMin) / 2, 3));
+		        const tendCo2 = getTendencia(lote.sensor_atual.co2, co2IdealMax, Math.max(co2IdealMax * 0.2, 100));
+	          const cameraLote = getCameraForLote(lote);
+	          const controladorLote = getControladorForLote(lote);
+          const incubacaoAtrasada = Boolean(
+            lote.data_prevista_fim_incubacao &&
+            !lote.data_real_fim_incubacao &&
+            ['incubacao', 'pronto_para_frutificacao'].includes(String(lote.fase_operacional || '')) &&
+            new Date(lote.data_prevista_fim_incubacao) < new Date(),
+          );
 
 	        return (
 	          <Card key={lote.id} className={`border-l-4 ${risco.border}`}>
@@ -1240,6 +1391,11 @@ export function Seguranca() {
                     <Badge className={`${risco.bg} ${risco.text}`}>
                       {risco.label} ({lote.score_risco}%)
                     </Badge>
+                    {incubacaoAtrasada && (
+                      <Badge className="bg-rose-100 text-rose-700">
+                        Incubação atrasada
+                      </Badge>
+                    )}
                     <Badge variant="outline">
                       Blocos: {lote.blocos_resumo?.total || 0}
                     </Badge>
@@ -1301,6 +1457,21 @@ export function Seguranca() {
                 </div>
               )}
 
+              {incubacaoAtrasada && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5 text-rose-600" />
+                    <div>
+                      <h4 className="font-semibold">Incubação acima do previsto</h4>
+                      <p className="mt-1">
+                        Previsão encerrada em {lote.data_prevista_fim_incubacao ? format(new Date(lote.data_prevista_fim_incubacao), 'dd/MM/yyyy') : '--'}.
+                        Revise a colonização e avance para frutificação apenas se o lote estiver pronto.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Sensores Atuais em Grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {/* Temperatura */}
@@ -1313,7 +1484,7 @@ export function Seguranca() {
                   <p className="text-2xl font-bold text-orange-900 mt-1">
                     {lote.sensor_atual.temperatura.toFixed(1)}°C
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">Ideal: 20-25°C</p>
+                  <p className="text-xs text-gray-500 mt-1">Ideal: {formatIdealRange(tempMin, tempMax, '°C') || '20-25°C'}</p>
                 </div>
 
                 {/* Umidade */}
@@ -1326,7 +1497,7 @@ export function Seguranca() {
                   <p className="text-2xl font-bold text-blue-900 mt-1">
                     {lote.sensor_atual.umidade.toFixed(0)}%
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">Ideal: 80-90%</p>
+                  <p className="text-xs text-gray-500 mt-1">Ideal: {formatIdealRange(umidMin, umidMax, '%') || '80-90%'}</p>
                 </div>
 
                 {/* CO2 */}
@@ -1339,8 +1510,23 @@ export function Seguranca() {
                   <p className="text-2xl font-bold text-purple-900 mt-1">
                     {lote.sensor_atual.co2.toFixed(0)}
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">ppm (Ideal: {'<'}1000)</p>
+                  <p className="text-xs text-gray-500 mt-1">ppm (Ideal: {'<'}{Math.round(co2IdealMax)})</p>
                 </div>
+
+                {typeof lote.sensor_atual.luminosidade_lux === 'number' && (lumMin !== null || lumMax !== null) && (
+                  <div className="bg-gradient-to-br from-amber-50 to-yellow-100 p-4 rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <Lightbulb className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <p className="text-xs text-gray-600">Luminosidade</p>
+                    <p className="text-2xl font-bold text-amber-900 mt-1">
+                      {lote.sensor_atual.luminosidade_lux.toFixed(0)}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      lux (Ideal: {formatIdealRange(lumMin, lumMax, '') || 'N/D'})
+                    </p>
+                  </div>
+                )}
 
                 {/* PM2.5 */}
                 {lote.sensor_atual.pm25 && (
@@ -1747,21 +1933,25 @@ export function Seguranca() {
         </DialogContent>
       </Dialog>
 
-      {/* Procedimentos de Emergência */}
-      <Card className="bg-red-50 border-l-4 border-l-red-500">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-red-900">
-            <AlertTriangle size={20} />
-            Procedimentos de Emergência
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm text-red-900 space-y-2">
-          <p><strong>Score de Risco &gt; 70%:</strong> Isolar lote imediatamente, verificar mancha visual, notificar supervisor</p>
-          <p><strong>CO₂ &gt; 1500 ppm:</strong> Aumentar ventilação, verificar sistema de exaustão, monitorar crescimento anormal</p>
-          <p><strong>Umidade &gt; 92%:</strong> Reduzir umidificação, aumentar circulação de ar, risco de contaminação bacteriana</p>
-          <p><strong>PM2.5 &gt; 50 µg/m³:</strong> Verificar portas/janelas abertas, limpar filtros HEPA, suspeitar de esporos no ar</p>
-        </CardContent>
-      </Card>
+	      {/* Procedimentos de Emergência */}
+	      <Card className="bg-red-50 border-l-4 border-l-red-500">
+	        <CardHeader>
+	          <CardTitle className="flex items-center gap-2 text-red-900">
+	            <AlertTriangle size={20} />
+	            Recomendações Operacionais
+	          </CardTitle>
+	        </CardHeader>
+	        <CardContent className="text-sm text-red-900 space-y-2">
+            {recomendacoesOperacionais.resumo && (
+              <p className="font-medium">{recomendacoesOperacionais.resumo}</p>
+            )}
+            <ul className="space-y-2">
+              {recomendacoesOperacionais.itens.map((item, index) => (
+                <li key={`${item}-${index}`}>• {item}</li>
+              ))}
+            </ul>
+	        </CardContent>
+	      </Card>
     </div>
   );
 }

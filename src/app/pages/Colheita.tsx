@@ -17,6 +17,7 @@ const FASE_LABEL: Record<string, string> = {
   esterilizacao: 'Esterilização',
   inoculacao: 'Inoculação',
   incubacao: 'Incubação',
+  pronto_para_frutificacao: 'Pronto para Frutificação',
   frutificacao: 'Frutificação',
   colheita: 'Colheita',
   encerramento: 'Encerramento',
@@ -61,7 +62,7 @@ export function Colheita() {
     setLoadingBlocos(true);
     try {
       const result = await fetchServer(`/lotes/${loteId}/blocos`);
-      const blocos = (result.blocos || []).filter((bloco: any) => ['frutificacao', 'incubacao'].includes(bloco.status_bloco));
+      const blocos = (result.blocos || []).filter((bloco: any) => bloco.status_bloco === 'frutificacao');
       setBlocosDisponiveis(blocos);
     } catch (error) {
       console.error('Erro ao carregar blocos do lote:', error);
@@ -110,7 +111,7 @@ export function Colheita() {
 
   const colheitas = colheitasData?.colheitas || [];
   const lotes = lotesData?.lotes || [];
-  const lotesDisponiveis = lotes.filter((l: any) => l.status === 'Pronto' || l.status === 'Em Cultivo' || l.fase_operacional === 'frutificacao');
+  const lotesDisponiveis = lotes.filter((l: any) => ['frutificacao', 'colheita'].includes(String(l.fase_operacional || '')));
 
   const totalColhido = colheitas.reduce((sum: number, c: any) => sum + parseFloat(c.quantidade_kg || 0), 0);
   const colheitasPremium = colheitas.filter((c: any) => c.qualidade === 'Premium').length;

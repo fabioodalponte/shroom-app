@@ -5,6 +5,7 @@ import {
   Box,
   ClipboardList,
   DollarSign,
+  FileText,
   GraduationCap,
   LayoutDashboard,
   Menu,
@@ -60,6 +61,10 @@ export function AppLayout() {
     { to: '/checklists', icon: ClipboardList, label: 'Checklists' },
     { to: '/financeiro', icon: DollarSign, label: 'Financeiro' },
   ];
+
+  if (usuario?.tipo_usuario === 'admin') {
+    navItems.splice(10, 0, { to: '/catalogo-cogumelos', icon: FileText, label: 'Catálogo' });
+  }
 
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0');

@@ -317,10 +317,24 @@ export function CreateLote() {
                         {produto.tempo_cultivo_dias && (
                           <li>• Ciclo: ~{produto.tempo_cultivo_dias} dias</li>
                         )}
+                        {produto?.perfil_cultivo?.ciclo_min_dias && produto?.perfil_cultivo?.ciclo_max_dias && (
+                          <li>• Ciclo operacional: {produto.perfil_cultivo.ciclo_min_dias} - {produto.perfil_cultivo.ciclo_max_dias} dias</li>
+                        )}
                         {produto.peso_medio_g && (
                           <li>• Peso médio: {produto.peso_medio_g}g</li>
                         )}
+                        {produto?.perfil_cultivo?.co2_ideal_max && (
+                          <li>• CO₂ ideal máximo: {produto.perfil_cultivo.co2_ideal_max} ppm</li>
+                        )}
+                        {produto?.perfil_cultivo?.luminosidade_min_lux !== null && produto?.perfil_cultivo?.luminosidade_min_lux !== undefined && produto?.perfil_cultivo?.luminosidade_max_lux !== null && produto?.perfil_cultivo?.luminosidade_max_lux !== undefined && (
+                          <li>• Luminosidade: {produto.perfil_cultivo.luminosidade_min_lux} - {produto.perfil_cultivo.luminosidade_max_lux} lux</li>
+                        )}
                       </ul>
+                      {produto?.perfil_cultivo?.recomendacoes_json?.resumo && (
+                        <div className="mt-3 rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-900">
+                          <strong>Recomendação:</strong> {produto.perfil_cultivo.recomendacoes_json.resumo}
+                        </div>
+                      )}
                     </div>
                   );
                 })()}

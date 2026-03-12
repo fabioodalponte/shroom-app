@@ -229,6 +229,13 @@ export function useRegistrarFrutificacao(loteId: string) {
   });
 }
 
+export function useMarcarLoteProntoParaFrutificacao(loteId: string) {
+  return usePost(`/lotes/${loteId}/pronto-para-frutificacao`, {
+    showSuccessToast: true,
+    successMessage: 'Lote marcado como pronto para frutificação!',
+  });
+}
+
 // Colheitas
 export function useColheitas() {
   return useGet('/colheitas');
@@ -249,6 +256,56 @@ export function useEstoque() {
 // Produtos
 export function useProdutos() {
   return useGet('/produtos');
+}
+
+export function useProdutoCatalogo(id: string) {
+  return useGet(`/produtos/${id}`);
+}
+
+export function useProdutoTreinamentos(id: string) {
+  return useGet(`/produtos/${id}/treinamentos`);
+}
+
+export function useCreateProdutoCatalogo() {
+  return usePost('/produtos', {
+    showSuccessToast: true,
+    successMessage: 'Tipo de cogumelo criado com sucesso!',
+  });
+}
+
+export function useUpdateProdutoCatalogo(id: string) {
+  return usePut(`/produtos/${id}`, {
+    showSuccessToast: true,
+    successMessage: 'Tipo de cogumelo atualizado com sucesso!',
+  });
+}
+
+export function useUpdateProdutoPerfilCultivo(id: string) {
+  return usePut(`/produtos/${id}/perfil`, {
+    showSuccessToast: true,
+    successMessage: 'Perfil de cultivo atualizado com sucesso!',
+  });
+}
+
+export function useCreateProdutoTreinamentoCatalogo(id: string) {
+  return usePost(`/produtos/${id}/treinamentos`, {
+    showSuccessToast: true,
+    successMessage: 'Treinamento do produto criado com sucesso!',
+  });
+}
+
+export function useUpdateProdutoTreinamentoCatalogo(produtoId: string, treinamentoId: string) {
+  return usePut(`/produtos/${produtoId}/treinamentos/${treinamentoId}`, {
+    showSuccessToast: true,
+    successMessage: 'Treinamento do produto atualizado com sucesso!',
+  });
+}
+
+export function useDeleteProdutoTreinamentoCatalogo(produtoId: string, treinamentoId: string) {
+  return useDelete(`/produtos/${produtoId}/treinamentos/${treinamentoId}`, {
+    showSuccessToast: true,
+    successMessage: 'Treinamento do produto removido com sucesso!',
+  });
 }
 
 // Clientes

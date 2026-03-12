@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Textarea } from '../../components/ui/textarea';
 import { Badge } from '../../components/ui/badge';
 
-type FaseOperacional = 'esterilizacao' | 'inoculacao' | 'incubacao' | 'frutificacao' | 'colheita' | 'encerramento';
+type FaseOperacional = 'esterilizacao' | 'inoculacao' | 'incubacao' | 'pronto_para_frutificacao' | 'frutificacao' | 'colheita' | 'encerramento';
 
 interface LoteResumo {
   id: string;
@@ -21,6 +21,9 @@ interface LoteResumo {
   sala?: string;
   status?: string;
   fase_operacional?: FaseOperacional;
+  data_inoculacao?: string | null;
+  data_prevista_fim_incubacao?: string | null;
+  data_real_fim_incubacao?: string | null;
   produto?: {
     nome?: string;
   } | null;
@@ -68,6 +71,7 @@ const FASE_LABEL: Record<string, string> = {
   esterilizacao: 'Esterilização',
   inoculacao: 'Inoculação',
   incubacao: 'Incubação',
+  pronto_para_frutificacao: 'Pronto para Frutificação',
   frutificacao: 'Frutificação',
   colheita: 'Colheita',
   encerramento: 'Encerramento',
@@ -77,7 +81,9 @@ const EVENTO_LABEL: Record<string, string> = {
   lote_criado: 'Lote criado',
   lote_atualizado: 'Lote atualizado',
   blocos_criados: 'Blocos criados',
+  inoculacao_registrada: 'Inoculação registrada',
   fase_alterada: 'Fase alterada',
+  incubacao_concluida: 'Incubação concluída',
   consumo_insumo: 'Consumo de insumo',
   colheita_registrada: 'Colheita registrada',
 };
@@ -129,7 +135,11 @@ export function OperacaoInoculacao() {
       }
 
       const lotesAtivos = ((lotesResult.value.lotes || []) as LoteResumo[])
-        .filter((lote) => lote.status !== 'Finalizado' && lote.fase_operacional !== 'encerramento')
+        .filter((lote) =>
+          lote.status !== 'Finalizado' &&
+          ['esterilizacao', 'inoculacao'].includes(String(lote.fase_operacional || 'esterilizacao')) &&
+          !lote.data_inoculacao,
+        )
         .sort((a, b) => a.codigo_lote.localeCompare(b.codigo_lote));
 
       setLotes(lotesAtivos);
@@ -206,7 +216,10 @@ export function OperacaoInoculacao() {
   }, [blocos]);
 
   const lotesElegiveis = useMemo(() => {
-    return lotes.filter((lote) => lote.fase_operacional !== 'encerramento');
+    return lotes.filter((lote) =>
+      ['esterilizacao', 'inoculacao'].includes(String(lote.fase_operacional || 'esterilizacao')) &&
+      !lote.data_inoculacao,
+    );
   }, [lotes]);
 
   const handleConsumoChange = (id: string, field: keyof ConsumoLinha, value: string) => {
@@ -255,7 +268,7 @@ export function OperacaoInoculacao() {
       });
 
       toast.success(
-        `Inoculação registrada. ${result.blocos_criados || quantidade} blocos enviados para incubação.`,
+        `Inoculação registrada. ${result.blocos_criados || quantidade} blocos em incubação até ${result.data_prevista_fim_incubacao ? format(new Date(result.data_prevista_fim_incubacao), 'dd/MM/yyyy', { locale: ptBR }) : 'data não definida'}.`,
       );
 
       setObservacoes('');
@@ -349,7 +362,7 @@ export function OperacaoInoculacao() {
               <Button
                 className="bg-[#546A4A] hover:bg-[#45583C]"
                 onClick={() => void handleRegistrarInoculacao()}
-                disabled={submitting || !loteSelecionado}
+                disabled={submitting || !loteSelecionado || !loteAtual || !lotesElegiveis.some((lote) => lote.id === loteSelecionado)}
               >
                 {submitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Beaker className="w-4 h-4 mr-2" />}
                 Registrar inoculação
@@ -478,6 +491,23 @@ export function OperacaoInoculacao() {
                     <div className="flex items-center justify-between">
                       <span className="text-gray-500">Fase atual</span>
                       <Badge variant="outline">{formatFase(loteAtual?.fase_operacional)}</Badge>
+                    </div>
+                    {loteAtual && !lotesElegiveis.some((lote) => lote.id === loteAtual.id) && (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                        Este lote já saiu da etapa de inoculação. Use esta tela apenas para lotes ainda não inoculados.
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-500">Inoculação</span>
+                      <span className="font-medium">
+                        {loteAtual?.data_inoculacao ? format(new Date(loteAtual.data_inoculacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-500">Fim incubação previsto</span>
+                      <span className="font-medium">
+                        {loteAtual?.data_prevista_fim_incubacao ? format(new Date(loteAtual.data_prevista_fim_incubacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                      </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-gray-500">Produto</span>
