@@ -1204,21 +1204,25 @@ export function Seguranca() {
 	      </Card>
 
       <Dialog open={controladorDialogOpen} onOpenChange={handleControladorDialogChange}>
-        <DialogContent className="w-[95vw] sm:max-w-4xl max-h-[90dvh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings2 className="w-5 h-5" />
-              {controladorSelecionado?.nome || 'Controle da Sala'}
-            </DialogTitle>
-            <DialogDescription>
-              {controladorSelecionado
-                ? `${controladorSelecionado.localizacao} • ${controladorSelecionado.status || 'Status não informado'}`
-                : 'Associe um controlador à sala para operar ventilação, luz, aquecimento e umidificação.'}
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-hidden p-0 sm:w-[95vw] sm:max-w-4xl">
+          <div
+            className="max-h-[90dvh] overflow-y-auto overflow-x-hidden overscroll-contain p-4 sm:p-6"
+            style={{ WebkitOverflowScrolling: 'touch' }}
+          >
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Settings2 className="w-5 h-5" />
+                {controladorSelecionado?.nome || 'Controle da Sala'}
+              </DialogTitle>
+              <DialogDescription>
+                {controladorSelecionado
+                  ? `${controladorSelecionado.localizacao} • ${controladorSelecionado.status || 'Status não informado'}`
+                  : 'Associe um controlador à sala para operar ventilação, luz, aquecimento e umidificação.'}
+              </DialogDescription>
+            </DialogHeader>
 
-          {controladorSelecionado ? (
-            <div className="space-y-4">
+            {controladorSelecionado ? (
+              <div className="space-y-4">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <Card>
                   <CardContent className="p-4">
@@ -1256,11 +1260,12 @@ export function Seguranca() {
                 </Card>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
                 <Button
                   variant="outline"
                   onClick={() => void carregarStatusControladorSala(controladorSelecionado.id)}
                   disabled={controladorLoading || !!controladorComando}
+                  className="w-full sm:w-auto"
                 >
                   <RefreshCcw className="mr-2 h-4 w-4" />
                   {controladorLoading ? 'Atualizando...' : 'Atualizar status'}
@@ -1269,6 +1274,7 @@ export function Seguranca() {
                   variant={(controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote') === 'remote' ? 'default' : 'outline'}
                   onClick={() => void alterarModoControladorSala('remote')}
                   disabled={!!controladorComando}
+                  className="w-full sm:w-auto"
                 >
                   Modo Remote
                 </Button>
@@ -1276,6 +1282,7 @@ export function Seguranca() {
                   variant={(controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote') === 'manual' ? 'default' : 'outline'}
                   onClick={() => void alterarModoControladorSala('manual')}
                   disabled={!!controladorComando}
+                  className="w-full sm:w-auto"
                 >
                   Modo Manual
                 </Button>
@@ -1283,6 +1290,7 @@ export function Seguranca() {
                   variant="outline"
                   onClick={() => void controlarTodosRelaysSala(true)}
                   disabled={!!controladorComando}
+                  className="w-full sm:w-auto"
                 >
                   Ligar todos
                 </Button>
@@ -1290,11 +1298,12 @@ export function Seguranca() {
                   variant="outline"
                   onClick={() => void controlarTodosRelaysSala(false)}
                   disabled={!!controladorComando}
+                  className="w-full sm:w-auto"
                 >
                   Desligar todos
                 </Button>
                 <DialogClose asChild>
-                  <Button variant="outline">Fechar</Button>
+                  <Button variant="outline" className="w-full sm:w-auto">Fechar</Button>
                 </DialogClose>
               </div>
 
@@ -1304,24 +1313,24 @@ export function Seguranca() {
                   const isRunning = controladorComando === `${relay.key}:on` || controladorComando === `${relay.key}:off`;
 
                   return (
-                    <Card key={relay.key} className={relay.state ? 'border-green-200 bg-green-50' : 'border-gray-200'}>
+                    <Card key={relay.key} className={relay.state ? 'min-w-0 border-green-200 bg-green-50' : 'min-w-0 border-gray-200'}>
                       <CardContent className="p-4 space-y-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="flex min-w-0 items-center gap-3">
                             <div className={`rounded-full p-2 ${relay.state ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                               <Icon className="h-5 w-5" />
                             </div>
-                            <div>
+                            <div className="min-w-0">
                               <p className="text-sm text-gray-500">Canal {relay.relayNumber}</p>
-                              <p className="font-semibold capitalize">{relay.name}</p>
+                              <p className="break-words font-semibold capitalize">{relay.name}</p>
                             </div>
                           </div>
-                          <Badge className={relay.state ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}>
+                          <Badge className={relay.state ? 'w-fit self-start bg-green-100 text-green-700' : 'w-fit self-start bg-gray-100 text-gray-700'}>
                             {relay.state ? 'Ligado' : 'Desligado'}
                           </Badge>
                         </div>
 
-                        <div className="flex gap-2">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           <Button
                             className="flex-1"
                             variant={relay.state ? 'outline' : 'default'}
@@ -1356,14 +1365,15 @@ export function Seguranca() {
                 <p className="flex items-center gap-2"><Power className="h-4 w-4" /> O app não chama o ESP direto; os comandos passam pela Supabase Function.</p>
                 <p>Isso preserva o token do controlador, evita CORS/mixed content e mantém o acesso funcionando em produção.</p>
               </div>
-            </div>
-          ) : (
-            <Card className="border-dashed">
-              <CardContent className="py-8 text-center text-sm text-gray-600">
-                Nenhum controlador de sala encontrado para este lote.
-              </CardContent>
-            </Card>
-          )}
+              </div>
+            ) : (
+              <Card className="border-dashed">
+                <CardContent className="py-8 text-center text-sm text-gray-600">
+                  Nenhum controlador de sala encontrado para este lote.
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 
