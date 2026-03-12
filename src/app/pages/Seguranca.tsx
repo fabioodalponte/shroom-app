@@ -4,6 +4,7 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '../../components/ui/accordion';
 import { 
   Shield, 
   Activity, 
@@ -22,7 +23,8 @@ import {
   Settings2,
   Lightbulb,
   Flame,
-  Power
+  Power,
+  X
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { format } from 'date-fns';
@@ -303,6 +305,10 @@ export function Seguranca() {
   const [controladorComando, setControladorComando] = useState<string | null>(null);
   const [controladorInfo, setControladorInfo] = useState<string | null>(null);
   const [controladorErro, setControladorErro] = useState<string | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 640px)').matches;
+  });
 
   const carregarDados = useCallback(async () => {
     setLoading(true);
@@ -357,6 +363,17 @@ export function Seguranca() {
       setLoteSelecionado('todos');
     }
   }, [lotes, loteSelecionado]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const mediaQuery = window.matchMedia('(max-width: 640px)');
+    const handleChange = (event: MediaQueryListEvent) => setIsMobileViewport(event.matches);
+
+    setIsMobileViewport(mediaQuery.matches);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
 
   useEffect(() => {
     if (!cameraDialogOpen || !autoAtualizarCamera || !cameraSelecionada?.url_stream) return;
@@ -814,10 +831,258 @@ export function Seguranca() {
   const lotesAlerta = lotes.filter(l => l.score_risco >= 70).length;
   const lotesAtencao = lotes.filter(l => l.score_risco >= 30 && l.score_risco < 70).length;
 
+  const controladorDialogBody = controladorSelecionado ? (
+    <div className="mt-4 space-y-4">
+      <div className="shrink-0 space-y-3 sm:space-y-4">
+        <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-3 sm:hidden">
+          <div>
+            <p className="text-xs text-gray-500">Modo atual</p>
+            <p className="text-sm font-semibold capitalize">
+              {controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote'}
+            </p>
+          </div>
+          <Badge variant="outline">
+            {typeof controladorStatus?.uptimeSeconds === 'number'
+              ? `${Math.floor(controladorStatus.uptimeSeconds / 60)} min`
+              : 'Sem uptime'}
+          </Badge>
+        </div>
+
+        <div className="hidden grid-cols-2 gap-2 md:grid-cols-4 sm:grid">
+          <Card>
+            <CardContent className="p-3 sm:p-4">
+              <p className="text-xs text-gray-500">Modo</p>
+              <p className="mt-1 text-base font-semibold capitalize sm:text-lg">
+                {controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote'}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3 sm:p-4">
+              <p className="text-xs text-gray-500">IP do dispositivo</p>
+              <p className="mt-1 text-sm font-medium break-all">
+                {controladorStatus?.ip || 'Aguardando status'}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3 sm:p-4">
+              <p className="text-xs text-gray-500">Uptime</p>
+              <p className="mt-1 text-base font-semibold sm:text-lg">
+                {typeof controladorStatus?.uptimeSeconds === 'number'
+                  ? `${Math.floor(controladorStatus.uptimeSeconds / 60)} min`
+                  : '--'}
+              </p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3 sm:p-4">
+              <p className="text-xs text-gray-500">Endpoint</p>
+              <p className="mt-1 text-sm font-medium break-all">
+                {controladorSelecionado.base_url || 'Não configurado'}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Accordion type="single" collapsible className="sm:hidden">
+          <AccordionItem value="controller-details" className="rounded-lg border px-3">
+            <AccordionTrigger className="py-3 text-sm">
+              Detalhes do controlador
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="grid grid-cols-2 gap-2 pb-2">
+                <Card>
+                  <CardContent className="p-3">
+                    <p className="text-xs text-gray-500">Modo</p>
+                    <p className="mt-1 text-sm font-semibold capitalize">
+                      {controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote'}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-3">
+                    <p className="text-xs text-gray-500">Uptime</p>
+                    <p className="mt-1 text-sm font-semibold">
+                      {typeof controladorStatus?.uptimeSeconds === 'number'
+                        ? `${Math.floor(controladorStatus.uptimeSeconds / 60)} min`
+                        : '--'}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="col-span-2">
+                  <CardContent className="p-3">
+                    <p className="text-xs text-gray-500">IP do dispositivo</p>
+                    <p className="mt-1 text-sm font-medium break-all">
+                      {controladorStatus?.ip || 'Aguardando status'}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="col-span-2">
+                  <CardContent className="p-3">
+                    <p className="text-xs text-gray-500">Endpoint</p>
+                    <p className="mt-1 text-sm font-medium break-all">
+                      {controladorSelecionado.base_url || 'Não configurado'}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          <Button
+            variant="outline"
+            onClick={() => void carregarStatusControladorSala(controladorSelecionado.id)}
+            disabled={controladorLoading || !!controladorComando}
+            className="w-full text-sm sm:w-auto"
+          >
+            <RefreshCcw className="mr-2 h-4 w-4" />
+            {controladorLoading ? 'Atualizando...' : 'Atualizar status'}
+          </Button>
+          <Button
+            variant={(controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote') === 'remote' ? 'default' : 'outline'}
+            onClick={() => void alterarModoControladorSala('remote')}
+            disabled={!!controladorComando}
+            className="w-full text-sm sm:w-auto"
+          >
+            Modo Remote
+          </Button>
+          <Button
+            variant={(controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote') === 'manual' ? 'default' : 'outline'}
+            onClick={() => void alterarModoControladorSala('manual')}
+            disabled={!!controladorComando}
+            className="w-full text-sm sm:w-auto"
+          >
+            Modo Manual
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void controlarTodosRelaysSala(true)}
+            disabled={!!controladorComando}
+            className="w-full text-sm sm:w-auto"
+          >
+            Ligar todos
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void controlarTodosRelaysSala(false)}
+            disabled={!!controladorComando}
+            className="w-full text-sm sm:w-auto"
+          >
+            Desligar todos
+          </Button>
+          {!isMobileViewport && (
+            <DialogClose asChild>
+              <Button variant="outline" className="w-full text-sm sm:w-auto">Fechar</Button>
+            </DialogClose>
+          )}
+        </div>
+
+        {controladorInfo && (
+          <p className="text-xs text-green-700">{controladorInfo}</p>
+        )}
+        {controladorErro && (
+          <p className="text-xs text-red-600">{controladorErro}</p>
+        )}
+      </div>
+
+      <div className="space-y-4 pb-24 pr-1 sm:pb-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {controladorRelayEntries.map((relay) => {
+            const Icon = relay.icon;
+            const isRunning = controladorComando === `${relay.key}:on` || controladorComando === `${relay.key}:off`;
+
+            return (
+              <Card key={relay.key} className={relay.state ? 'min-w-0 border-green-200 bg-green-50' : 'min-w-0 border-gray-200'}>
+                <CardContent className="p-4 space-y-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className={`rounded-full p-2 ${relay.state ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                        <Icon className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm text-gray-500">Canal {relay.relayNumber}</p>
+                        <p className="break-words font-semibold capitalize">{relay.name}</p>
+                      </div>
+                    </div>
+                    <Badge className={relay.state ? 'w-fit self-start bg-green-100 text-green-700' : 'w-fit self-start bg-gray-100 text-gray-700'}>
+                      {relay.state ? 'Ligado' : 'Desligado'}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Button
+                      className="flex-1"
+                      variant={relay.state ? 'outline' : 'default'}
+                      onClick={() => void controlarRelaySala(relay.key, true)}
+                      disabled={!!controladorComando}
+                    >
+                      {isRunning && controladorComando?.endsWith(':on') ? 'Ligando...' : 'Ligar'}
+                    </Button>
+                    <Button
+                      className="flex-1"
+                      variant={relay.state ? 'destructive' : 'outline'}
+                      onClick={() => void controlarRelaySala(relay.key, false)}
+                      disabled={!!controladorComando}
+                    >
+                      {isRunning && controladorComando?.endsWith(':off') ? 'Desligando...' : 'Desligar'}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 rounded-lg border border-dashed p-3 text-xs text-gray-600 space-y-1">
+          <p className="flex items-center gap-2"><Power className="h-4 w-4" /> O app não chama o ESP direto; os comandos passam pela Supabase Function.</p>
+          <p>Isso preserva o token do controlador, evita CORS/mixed content e mantém o acesso funcionando em produção.</p>
+        </div>
+      </div>
+    </div>
+  ) : (
+    <Card className="mt-4 border-dashed">
+      <CardContent className="py-8 text-center text-sm text-gray-600">
+        Nenhum controlador de sala encontrado para este lote.
+      </CardContent>
+    </Card>
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#546A4A]"></div>
+      </div>
+    );
+  }
+
+  if (isMobileViewport && controladorDialogOpen) {
+    return (
+      <div className="min-h-screen bg-[#F8F6F2] pb-6">
+        <div className="sticky top-0 z-20 border-b bg-[#F8F6F2]/95 px-4 py-4 backdrop-blur">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-lg font-semibold">
+                <Settings2 className="h-5 w-5" />
+                {controladorSelecionado?.nome || 'Controle da Sala'}
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {controladorSelecionado
+                  ? `${controladorSelecionado.localizacao} • ${controladorSelecionado.status || 'Status não informado'}`
+                  : 'Associe um controlador à sala para operar ventilação, luz, aquecimento e umidificação.'}
+              </p>
+            </div>
+            <Button variant="ghost" size="icon" onClick={() => handleControladorDialogChange(false)} aria-label="Fechar controle da sala">
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+
+        <div className="p-4">
+          {controladorDialogBody}
+        </div>
       </div>
     );
   }
@@ -1203,177 +1468,20 @@ export function Seguranca() {
 	        </CardContent>
 	      </Card>
 
-      <Dialog open={controladorDialogOpen} onOpenChange={handleControladorDialogChange}>
-        <DialogContent className="w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)] overflow-hidden p-0 sm:w-[95vw] sm:max-w-4xl">
-          <div
-            className="max-h-[90dvh] overflow-y-auto overflow-x-hidden overscroll-contain p-4 sm:p-6"
-            style={{ WebkitOverflowScrolling: 'touch' }}
-          >
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Settings2 className="w-5 h-5" />
-                {controladorSelecionado?.nome || 'Controle da Sala'}
-              </DialogTitle>
-              <DialogDescription>
-                {controladorSelecionado
-                  ? `${controladorSelecionado.localizacao} • ${controladorSelecionado.status || 'Status não informado'}`
-                  : 'Associe um controlador à sala para operar ventilação, luz, aquecimento e umidificação.'}
-              </DialogDescription>
-            </DialogHeader>
-
-            {controladorSelecionado ? (
-              <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                <Card>
-                  <CardContent className="p-4">
-                    <p className="text-xs text-gray-500">Modo</p>
-                    <p className="mt-1 text-lg font-semibold capitalize">
-                      {controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote'}
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <p className="text-xs text-gray-500">IP do dispositivo</p>
-                    <p className="mt-1 text-sm font-medium break-all">
-                      {controladorStatus?.ip || 'Aguardando status'}
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <p className="text-xs text-gray-500">Uptime</p>
-                    <p className="mt-1 text-lg font-semibold">
-                      {typeof controladorStatus?.uptimeSeconds === 'number'
-                        ? `${Math.floor(controladorStatus.uptimeSeconds / 60)} min`
-                        : '--'}
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-4">
-                    <p className="text-xs text-gray-500">Endpoint</p>
-                    <p className="mt-1 text-sm font-medium break-all">
-                      {controladorSelecionado.base_url || 'Não configurado'}
-                    </p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
-                <Button
-                  variant="outline"
-                  onClick={() => void carregarStatusControladorSala(controladorSelecionado.id)}
-                  disabled={controladorLoading || !!controladorComando}
-                  className="w-full sm:w-auto"
-                >
-                  <RefreshCcw className="mr-2 h-4 w-4" />
-                  {controladorLoading ? 'Atualizando...' : 'Atualizar status'}
-                </Button>
-                <Button
-                  variant={(controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote') === 'remote' ? 'default' : 'outline'}
-                  onClick={() => void alterarModoControladorSala('remote')}
-                  disabled={!!controladorComando}
-                  className="w-full sm:w-auto"
-                >
-                  Modo Remote
-                </Button>
-                <Button
-                  variant={(controladorStatus?.mode || controladorSelecionado.modo_padrao || 'remote') === 'manual' ? 'default' : 'outline'}
-                  onClick={() => void alterarModoControladorSala('manual')}
-                  disabled={!!controladorComando}
-                  className="w-full sm:w-auto"
-                >
-                  Modo Manual
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void controlarTodosRelaysSala(true)}
-                  disabled={!!controladorComando}
-                  className="w-full sm:w-auto"
-                >
-                  Ligar todos
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void controlarTodosRelaysSala(false)}
-                  disabled={!!controladorComando}
-                  className="w-full sm:w-auto"
-                >
-                  Desligar todos
-                </Button>
-                <DialogClose asChild>
-                  <Button variant="outline" className="w-full sm:w-auto">Fechar</Button>
-                </DialogClose>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                {controladorRelayEntries.map((relay) => {
-                  const Icon = relay.icon;
-                  const isRunning = controladorComando === `${relay.key}:on` || controladorComando === `${relay.key}:off`;
-
-                  return (
-                    <Card key={relay.key} className={relay.state ? 'min-w-0 border-green-200 bg-green-50' : 'min-w-0 border-gray-200'}>
-                      <CardContent className="p-4 space-y-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="flex min-w-0 items-center gap-3">
-                            <div className={`rounded-full p-2 ${relay.state ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                              <Icon className="h-5 w-5" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-sm text-gray-500">Canal {relay.relayNumber}</p>
-                              <p className="break-words font-semibold capitalize">{relay.name}</p>
-                            </div>
-                          </div>
-                          <Badge className={relay.state ? 'w-fit self-start bg-green-100 text-green-700' : 'w-fit self-start bg-gray-100 text-gray-700'}>
-                            {relay.state ? 'Ligado' : 'Desligado'}
-                          </Badge>
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <Button
-                            className="flex-1"
-                            variant={relay.state ? 'outline' : 'default'}
-                            onClick={() => void controlarRelaySala(relay.key, true)}
-                            disabled={!!controladorComando}
-                          >
-                            {isRunning && controladorComando?.endsWith(':on') ? 'Ligando...' : 'Ligar'}
-                          </Button>
-                          <Button
-                            className="flex-1"
-                            variant={relay.state ? 'destructive' : 'outline'}
-                            onClick={() => void controlarRelaySala(relay.key, false)}
-                            disabled={!!controladorComando}
-                          >
-                            {isRunning && controladorComando?.endsWith(':off') ? 'Desligando...' : 'Desligar'}
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-
-              {controladorInfo && (
-                <p className="text-xs text-green-700">{controladorInfo}</p>
-              )}
-              {controladorErro && (
-                <p className="text-xs text-red-600">{controladorErro}</p>
-              )}
-
-              <div className="rounded-lg border border-dashed p-3 text-xs text-gray-600 space-y-1">
-                <p className="flex items-center gap-2"><Power className="h-4 w-4" /> O app não chama o ESP direto; os comandos passam pela Supabase Function.</p>
-                <p>Isso preserva o token do controlador, evita CORS/mixed content e mantém o acesso funcionando em produção.</p>
-              </div>
-              </div>
-            ) : (
-              <Card className="border-dashed">
-                <CardContent className="py-8 text-center text-sm text-gray-600">
-                  Nenhum controlador de sala encontrado para este lote.
-                </CardContent>
-              </Card>
-            )}
-          </div>
+      <Dialog open={!isMobileViewport && controladorDialogOpen} onOpenChange={handleControladorDialogChange}>
+        <DialogContent className="top-[50%] left-[50%] h-[82dvh] w-[76vw] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border p-5">
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <Settings2 className="w-5 h-5" />
+              {controladorSelecionado?.nome || 'Controle da Sala'}
+            </DialogTitle>
+            <DialogDescription>
+              {controladorSelecionado
+                ? `${controladorSelecionado.localizacao} • ${controladorSelecionado.status || 'Status não informado'}`
+                : 'Associe um controlador à sala para operar ventilação, luz, aquecimento e umidificação.'}
+            </DialogDescription>
+          </DialogHeader>
+          {controladorDialogBody}
         </DialogContent>
       </Dialog>
 
