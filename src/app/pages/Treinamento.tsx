@@ -65,6 +65,8 @@ interface ProdutoCatalogo {
     co2_ideal_max?: number | null;
     luminosidade_min_lux?: number | null;
     luminosidade_max_lux?: number | null;
+    ciclo_estimado_dias_min?: number | null;
+    ciclo_estimado_dias_max?: number | null;
     ciclo_min_dias?: number | null;
     ciclo_max_dias?: number | null;
     parametros_fases_json?: Record<string, any>;
@@ -319,7 +321,11 @@ export function Treinamento() {
         temp: formatRange(produto.temperatura_ideal_min, produto.temperatura_ideal_max, '°C'),
         humidity: formatRange(produto.umidade_ideal_min, produto.umidade_ideal_max, '%'),
         light: lightFromLux,
-        cycle: formatCycle(perfil?.ciclo_min_dias, perfil?.ciclo_max_dias, produto.tempo_cultivo_dias),
+        cycle: formatCycle(
+          perfil?.ciclo_estimado_dias_min ?? perfil?.ciclo_min_dias,
+          perfil?.ciclo_estimado_dias_max ?? perfil?.ciclo_max_dias,
+          produto.tempo_cultivo_dias,
+        ),
         co2: co2Label,
       };
     });

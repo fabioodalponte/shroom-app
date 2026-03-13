@@ -317,8 +317,8 @@ export function CreateLote() {
                         {produto.tempo_cultivo_dias && (
                           <li>• Ciclo: ~{produto.tempo_cultivo_dias} dias</li>
                         )}
-                        {produto?.perfil_cultivo?.ciclo_min_dias && produto?.perfil_cultivo?.ciclo_max_dias && (
-                          <li>• Ciclo operacional: {produto.perfil_cultivo.ciclo_min_dias} - {produto.perfil_cultivo.ciclo_max_dias} dias</li>
+                        {(produto?.perfil_cultivo?.ciclo_estimado_dias_min ?? produto?.perfil_cultivo?.ciclo_min_dias) && (produto?.perfil_cultivo?.ciclo_estimado_dias_max ?? produto?.perfil_cultivo?.ciclo_max_dias) && (
+                          <li>• Ciclo operacional: {produto.perfil_cultivo.ciclo_estimado_dias_min ?? produto.perfil_cultivo.ciclo_min_dias} - {produto.perfil_cultivo.ciclo_estimado_dias_max ?? produto.perfil_cultivo.ciclo_max_dias} dias</li>
                         )}
                         {produto.peso_medio_g && (
                           <li>• Peso médio: {produto.peso_medio_g}g</li>

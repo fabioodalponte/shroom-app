@@ -63,6 +63,7 @@ function resolveIncubacaoDiasPrevistos(perfilCultivo?: any | null) {
   const incubacaoConfig = perfilCultivo?.parametros_fases_json?.incubacao || {};
   return (
     toPositiveInteger(incubacaoConfig?.dias_previstos) ||
+    toPositiveInteger(perfilCultivo?.ciclo_estimado_dias_min) ||
     toPositiveInteger(perfilCultivo?.ciclo_min_dias) ||
     14
   );
@@ -983,9 +984,16 @@ function normalizeProdutoCatalogRow(
   perfilMap: Map<string, any>,
   treinamentosMap: Map<string, any[]>,
 ) {
+  const perfil = perfilMap.get(produto.id) || null;
   return {
     ...produto,
-    perfil_cultivo: perfilMap.get(produto.id) || null,
+    perfil_cultivo: perfil
+      ? {
+          ...perfil,
+          ciclo_estimado_dias_min: perfil.ciclo_estimado_dias_min ?? perfil.ciclo_min_dias ?? null,
+          ciclo_estimado_dias_max: perfil.ciclo_estimado_dias_max ?? perfil.ciclo_max_dias ?? null,
+        }
+      : null,
     treinamentos: treinamentosMap.get(produto.id) || [],
   };
 }
@@ -1141,13 +1149,18 @@ export async function updateProduto(id: string, produtoData: any) {
 }
 
 export async function upsertProdutoPerfil(produtoId: string, perfilData: any) {
+  const cicloEstimadoDiasMin = perfilData?.ciclo_estimado_dias_min ?? perfilData?.ciclo_min_dias ?? null;
+  const cicloEstimadoDiasMax = perfilData?.ciclo_estimado_dias_max ?? perfilData?.ciclo_max_dias ?? null;
+
   const payload = {
     produto_id: produtoId,
     co2_ideal_max: perfilData?.co2_ideal_max ?? null,
     luminosidade_min_lux: perfilData?.luminosidade_min_lux ?? null,
     luminosidade_max_lux: perfilData?.luminosidade_max_lux ?? null,
-    ciclo_min_dias: perfilData?.ciclo_min_dias ?? null,
-    ciclo_max_dias: perfilData?.ciclo_max_dias ?? null,
+    ciclo_estimado_dias_min: cicloEstimadoDiasMin,
+    ciclo_estimado_dias_max: cicloEstimadoDiasMax,
+    ciclo_min_dias: cicloEstimadoDiasMin,
+    ciclo_max_dias: cicloEstimadoDiasMax,
     parametros_fases_json: perfilData?.parametros_fases_json || {},
     recomendacoes_json: perfilData?.recomendacoes_json || {},
     observacoes: perfilData?.observacoes || null,

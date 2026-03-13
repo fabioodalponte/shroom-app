@@ -48,6 +48,8 @@ interface ProdutoCatalogo {
     co2_ideal_max?: number | null;
     luminosidade_min_lux?: number | null;
     luminosidade_max_lux?: number | null;
+    ciclo_estimado_dias_min?: number | null;
+    ciclo_estimado_dias_max?: number | null;
     ciclo_min_dias?: number | null;
     ciclo_max_dias?: number | null;
     parametros_fases_json?: Record<string, unknown>;
@@ -76,8 +78,8 @@ const emptyPerfilForm = {
   co2_ideal_max: '',
   luminosidade_min_lux: '',
   luminosidade_max_lux: '',
-  ciclo_min_dias: '',
-  ciclo_max_dias: '',
+  ciclo_estimado_dias_min: '',
+  ciclo_estimado_dias_max: '',
   parametros_fases_json: '{\n  "incubacao": {},\n  "frutificacao": {}\n}',
   recomendacoes_json: '{\n  "resumo": "",\n  "alertas": []\n}',
   observacoes: '',
@@ -153,8 +155,8 @@ function getPerfilFormFromCatalogo(produto?: ProdutoCatalogo | null) {
     co2_ideal_max: toInputValue(perfil.co2_ideal_max),
     luminosidade_min_lux: toInputValue(perfil.luminosidade_min_lux),
     luminosidade_max_lux: toInputValue(perfil.luminosidade_max_lux),
-    ciclo_min_dias: toInputValue(perfil.ciclo_min_dias),
-    ciclo_max_dias: toInputValue(perfil.ciclo_max_dias),
+    ciclo_estimado_dias_min: toInputValue(perfil.ciclo_estimado_dias_min ?? perfil.ciclo_min_dias),
+    ciclo_estimado_dias_max: toInputValue(perfil.ciclo_estimado_dias_max ?? perfil.ciclo_max_dias),
     parametros_fases_json: stringifyJson(perfil.parametros_fases_json, '{\n  "incubacao": {},\n  "frutificacao": {}\n}'),
     recomendacoes_json: stringifyJson(perfil.recomendacoes_json, '{\n  "resumo": "",\n  "alertas": []\n}'),
     observacoes: perfil.observacoes || '',
@@ -280,8 +282,8 @@ export function CatalogoCogumelos() {
       co2_ideal_max: parseNumberOrNull(perfilForm.co2_ideal_max),
       luminosidade_min_lux: parseNumberOrNull(perfilForm.luminosidade_min_lux),
       luminosidade_max_lux: parseNumberOrNull(perfilForm.luminosidade_max_lux),
-      ciclo_min_dias: parseIntegerOrNull(perfilForm.ciclo_min_dias),
-      ciclo_max_dias: parseIntegerOrNull(perfilForm.ciclo_max_dias),
+      ciclo_estimado_dias_min: parseIntegerOrNull(perfilForm.ciclo_estimado_dias_min),
+      ciclo_estimado_dias_max: parseIntegerOrNull(perfilForm.ciclo_estimado_dias_max),
       parametros_fases_json: parseJsonField('parâmetros por fase', perfilForm.parametros_fases_json),
       recomendacoes_json: parseJsonField('recomendações operacionais', perfilForm.recomendacoes_json),
       observacoes: perfilForm.observacoes.trim() || null,
@@ -535,12 +537,12 @@ export function CatalogoCogumelos() {
                     <Input value={perfilForm.luminosidade_max_lux} onChange={(e) => setPerfilForm((prev) => ({ ...prev, luminosidade_max_lux: e.target.value }))} />
                   </div>
                   <div className="space-y-2">
-                    <Label>Ciclo mínimo (dias)</Label>
-                    <Input value={perfilForm.ciclo_min_dias} onChange={(e) => setPerfilForm((prev) => ({ ...prev, ciclo_min_dias: e.target.value }))} />
+                    <Label>Ciclo estimado mínimo (dias)</Label>
+                    <Input type="number" min="0" value={perfilForm.ciclo_estimado_dias_min} onChange={(e) => setPerfilForm((prev) => ({ ...prev, ciclo_estimado_dias_min: e.target.value }))} />
                   </div>
                   <div className="space-y-2">
-                    <Label>Ciclo máximo (dias)</Label>
-                    <Input value={perfilForm.ciclo_max_dias} onChange={(e) => setPerfilForm((prev) => ({ ...prev, ciclo_max_dias: e.target.value }))} />
+                    <Label>Ciclo estimado máximo (dias)</Label>
+                    <Input type="number" min="0" value={perfilForm.ciclo_estimado_dias_max} onChange={(e) => setPerfilForm((prev) => ({ ...prev, ciclo_estimado_dias_max: e.target.value }))} />
                   </div>
                 </div>
 
