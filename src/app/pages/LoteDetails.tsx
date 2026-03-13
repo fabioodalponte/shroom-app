@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router';
-import { ArrowLeft, Thermometer, Droplets, Wind, Calendar, Package, QrCode, Camera, TrendingUp, Printer, Play, Pause, Download, Info, Scissors } from 'lucide-react';
+import { ArrowLeft, Thermometer, Droplets, Wind, Calendar, Package, QrCode, Camera, TrendingUp, Printer, Play, Pause, Download, Info, Scissors, Loader2 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
@@ -14,16 +14,130 @@ import { useCreateColheita } from '../../hooks/useApi';
 import { toast } from 'sonner@2.0.3';
 import QRCode from 'qrcode';
 import { ImageWithFallback } from '../../components/figma/ImageWithFallback';
+import { fetchServer } from '../../utils/supabase/client';
+
+interface LoteMonitoramento {
+  id: string;
+  codigo_lote?: string;
+  sala?: string;
+  sensor_atual: {
+    temperatura: number;
+    umidade: number;
+    co2: number;
+    luminosidade_lux?: number;
+  };
+  historico: Array<{
+    timestamp: string;
+    temperatura: number;
+    umidade: number;
+    co2: number;
+  }>;
+}
+
+interface LoteData {
+  id: string;
+  codigo_lote: string;
+  fase_operacional?: string | null;
+  fase_atual?: string | null;
+  data_inicio: string;
+  data_inoculacao?: string | null;
+  data_previsao_colheita?: string | null;
+  data_prevista_fim_incubacao?: string | null;
+  data_real_fim_incubacao?: string | null;
+  sala?: string | null;
+  prateleira?: string | null;
+  temperatura_atual?: number | null;
+  umidade_atual?: number | null;
+  quantidade_inicial?: number | null;
+  unidade?: string | null;
+  status?: string | null;
+  observacoes?: string | null;
+  produto?: {
+    nome?: string | null;
+    variedade?: string | null;
+    descricao?: string | null;
+    tempo_cultivo_dias?: number | null;
+    temperatura_ideal_min?: number | null;
+    temperatura_ideal_max?: number | null;
+    umidade_ideal_min?: number | null;
+    umidade_ideal_max?: number | null;
+    perfil_cultivo?: {
+      co2_ideal_max?: number | null;
+    } | null;
+  } | null;
+}
+
+interface TimeLapseFrame {
+  id: string;
+  sequence_index: number;
+  captured_at: string | null;
+  executed_at: string | null;
+  preview_url: string | null;
+  image_storage_path: string | null;
+  quality_status: string | null;
+  dataset_class: string | null;
+  blocos_detectados: number;
+}
+
+function formatRange(min?: number | null, max?: number | null, suffix = '') {
+  if (min === null || min === undefined || max === null || max === undefined) return 'N/D';
+  return `${min}-${max}${suffix}`;
+}
+
+function formatDateShort(value?: string | null) {
+  if (!value) return 'N/D';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'N/D';
+  return date.toLocaleDateString('pt-BR');
+}
+
+function formatDateLong(value?: string | null) {
+  if (!value) return 'N/D';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'N/D';
+  return date.toLocaleDateString('pt-BR', { dateStyle: 'long' });
+}
+
+function formatFaseLabel(fase?: string | null) {
+  const labels: Record<string, string> = {
+    esterilizacao: 'Esterilização',
+    inoculacao: 'Inoculação',
+    incubacao: 'Incubação',
+    pronto_para_frutificacao: 'Pronto para Frutificação',
+    frutificacao: 'Frutificação',
+    colheita: 'Colheita',
+    encerramento: 'Encerramento',
+  };
+
+  if (!fase) return 'Não definida';
+  return labels[fase] || fase;
+}
+
+function normalizeText(value?: string | null) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
 
 export function LoteDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [lote, setLote] = useState<LoteData | null>(null);
+  const [monitoramento, setMonitoramento] = useState<LoteMonitoramento | null>(null);
   const [isColheitaOpen, setIsColheitaOpen] = useState(false);
   const [isTimelapseOpen, setIsTimelapseOpen] = useState(false);
   const [isQRCodeOpen, setIsQRCodeOpen] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [timelapseIndex, setTimelapseIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [timelapseFrames, setTimelapseFrames] = useState<TimeLapseFrame[]>([]);
+  const [timelapseLoading, setTimelapseLoading] = useState(false);
+  const [timelapseError, setTimelapseError] = useState<string | null>(null);
+  const [timelapseMatchStrategy, setTimelapseMatchStrategy] = useState<string | null>(null);
+  const [timelapseEmptyReason, setTimelapseEmptyReason] = useState<string | null>(null);
   const timelapseInterval = useRef<NodeJS.Timeout | null>(null);
   
   const [formData, setFormData] = useState({
@@ -35,83 +149,112 @@ export function LoteDetails() {
 
   const { post: createColheita, loading: creating } = useCreateColheita();
 
-  // Time-lapse images
-  const timelapseImages = [
-    {
-      url: 'https://images.unsplash.com/photo-1735282260417-cb781d757604?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtdXNocm9vbSUyMGZhcm0lMjBteWNlbGl1bXxlbnwxfHx8fDE3NjQ4MDE2MjJ8MA&ixlib=rb-4.1.0&q=80&w=1080',
-      day: 0,
-      stage: 'Inoculação'
-    },
-    {
-      url: 'https://images.unsplash.com/photo-1693296654707-4ca9c808f703?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtdXNocm9vbSUyMGdyb3dpbmclMjB0aW1lbGFwc2V8ZW58MXx8fHwxNzY0ODAxNjIyfDA&ixlib=rb-4.1.0&q=80&w=1080',
-      day: 7,
-      stage: 'Micélio Crescendo'
-    },
-    {
-      url: 'https://images.unsplash.com/photo-1735282260417-cb781d757604?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxzaGlpdGFrZSUyMG11c2hyb29tJTIwY3VsdGl2YXRpb258ZW58MXx8fHwxNzY0ODAxNjIyfDA&ixlib=rb-4.1.0&q=80&w=1080',
-      day: 14,
-      stage: 'Primórdios Formando'
-    },
-    {
-      url: 'https://images.unsplash.com/photo-1693296654707-4ca9c808f703?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtdXNocm9vbSUyMGdyb3dpbmclMjBzdGFnZXN8ZW58MXx8fHwxNzY0ODAxNjIzfDA&ixlib=rb-4.1.0&q=80&w=1080',
-      day: 18,
-      stage: 'Crescimento Ativo'
-    },
-    {
-      url: 'https://images.unsplash.com/photo-1735282260417-cb781d757604?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxmcmVzaCUyMHNoaWl0YWtlJTIwbXVzaHJvb21zJTIwaGFydmVzdHxlbnwxfHx8fDE3NjQ4MDE2MjN8MA&ixlib=rb-4.1.0&q=80&w=1080',
-      day: 21,
-      stage: 'Pronto para Colheita'
+  useEffect(() => {
+    async function loadData() {
+      if (!id) return;
+
+      try {
+        setLoading(true);
+        const [loteResult, sensoresResult] = await Promise.all([
+          fetchServer(`/lotes/${id}`),
+          fetchServer('/sensores/latest?hours=24'),
+        ]);
+
+        const loteData = (loteResult?.lote || null) as LoteData | null;
+        const sensores = (sensoresResult?.sensores || []) as LoteMonitoramento[];
+        const monitoramentoDoLote =
+          sensores.find((item) => item.id === id) ||
+          sensores.find((item) => normalizeText(item.codigo_lote) === normalizeText(loteData?.codigo_lote)) ||
+          sensores.find((item) => normalizeText(item.sala) === normalizeText(loteData?.sala));
+
+        setLote(loteData);
+        setMonitoramento(monitoramentoDoLote || null);
+      } catch (error) {
+        console.error('Erro ao carregar detalhes do lote:', error);
+        toast.error('Erro ao carregar detalhes do lote.');
+      } finally {
+        setLoading(false);
+      }
     }
-  ];
 
-  const lote = {
-    id: id || 'LT-2024-042',
-    variety: 'Shiitake Premium',
-    stage: 'Colheita',
-    startDate: '2024-11-12',
-    substrate: 'Serragem de Carvalho',
-    container: 'Sala A - Prateleira 3',
-    temp: 18.5,
-    humidity: 85,
-    co2: 450,
-    days: 21,
-    status: 'ready',
-    expectedYield: '25kg',
-    actualYield: null,
-  };
+    void loadData();
+  }, [id]);
 
-  const tempData = [
-    { day: 1, value: 24 },
-    { day: 5, value: 22 },
-    { day: 10, value: 20 },
-    { day: 15, value: 19 },
-    { day: 20, value: 18.5 },
-    { day: 21, value: 18.5 },
-  ];
+  const diasCultivo = lote?.data_inicio
+    ? Math.max(0, Math.floor((Date.now() - new Date(lote.data_inicio).getTime()) / (1000 * 60 * 60 * 24)))
+    : 0;
 
-  const humidityData = [
-    { day: 1, value: 70 },
-    { day: 5, value: 75 },
-    { day: 10, value: 80 },
-    { day: 15, value: 82 },
-    { day: 20, value: 85 },
-    { day: 21, value: 85 },
-  ];
+  const temperaturaAtual = monitoramento?.sensor_atual?.temperatura ?? lote?.temperatura_atual ?? null;
+  const umidadeAtual = monitoramento?.sensor_atual?.umidade ?? lote?.umidade_atual ?? null;
+  const co2Atual = monitoramento?.sensor_atual?.co2 ?? null;
+  const temperaturaIdeal = formatRange(lote?.produto?.temperatura_ideal_min, lote?.produto?.temperatura_ideal_max, '°C');
+  const umidadeIdeal = formatRange(lote?.produto?.umidade_ideal_min, lote?.produto?.umidade_ideal_max, '%');
+  const co2Ideal = lote?.produto?.perfil_cultivo?.co2_ideal_max ? `<${Math.round(lote.produto.perfil_cultivo.co2_ideal_max)} ppm` : 'N/D';
+  const previsaoPrincipal = lote?.data_prevista_fim_incubacao
+    ? { titulo: 'Fim incubação previsto', valor: formatDateShort(lote.data_prevista_fim_incubacao), subtitulo: 'Próximo marco operacional' }
+    : lote?.data_previsao_colheita
+      ? { titulo: 'Colheita prevista', valor: formatDateShort(lote.data_previsao_colheita), subtitulo: 'Planejamento do lote' }
+      : lote?.produto?.tempo_cultivo_dias
+        ? { titulo: 'Ciclo estimado', valor: `~${lote.produto.tempo_cultivo_dias} dias`, subtitulo: 'Referência do produto' }
+        : { titulo: 'Previsão do lote', valor: 'N/D', subtitulo: 'Sem previsão registrada' };
+
+  const tempData = (monitoramento?.historico || []).map((item, index) => ({
+    label: new Date(item.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    temperatura: item.temperatura,
+    ordem: index + 1,
+  }));
+
+  const humidityData = (monitoramento?.historico || []).map((item, index) => ({
+    label: new Date(item.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    umidade: item.umidade,
+    ordem: index + 1,
+  }));
+
+  const co2Data = (monitoramento?.historico || []).map((item, index) => ({
+    label: new Date(item.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+    co2: item.co2,
+    ordem: index + 1,
+  }));
+
+  const historicoDisponivel = tempData.length > 0 || humidityData.length > 0 || co2Data.length > 0;
 
   const timeline = [
-    { date: '2024-11-12', event: 'Inoculação iniciada', type: 'start' },
-    { date: '2024-11-19', event: 'Fase de incubação concluída', type: 'milestone' },
-    { date: '2024-11-26', event: 'Primórdios visíveis', type: 'milestone' },
-    { date: '2024-12-03', event: 'Ponto ideal de colheita', type: 'ready' },
-  ];
+    lote?.data_inicio ? { date: lote.data_inicio, event: 'Lote criado', type: 'start' } : null,
+    lote?.data_inoculacao ? { date: lote.data_inoculacao, event: 'Inoculação registrada', type: 'milestone' } : null,
+    lote?.data_prevista_fim_incubacao ? { date: lote.data_prevista_fim_incubacao, event: 'Fim da incubação previsto', type: 'milestone' } : null,
+    lote?.data_real_fim_incubacao ? { date: lote.data_real_fim_incubacao, event: 'Incubação concluída', type: 'milestone' } : null,
+    lote?.data_previsao_colheita ? { date: lote.data_previsao_colheita, event: 'Colheita prevista', type: 'ready' } : null,
+  ].filter(Boolean) as Array<{ date: string; event: string; type: string }>;
 
   useEffect(() => {
     if (isQRCodeOpen) {
-      QRCode.toDataURL(`https://example.com/lotes/${id}`)
+      QRCode.toDataURL(`${window.location.origin}/lotes/${id}`)
         .then(url => setQrCodeUrl(url))
         .catch(err => console.error(err));
     }
   }, [isQRCodeOpen, id]);
+
+  async function loadTimeLapse() {
+    if (!id) return;
+
+    try {
+      setTimelapseLoading(true);
+      setTimelapseError(null);
+      const result = await fetchServer(`/lotes/${id}/timelapse?limit=180`);
+      setTimelapseFrames((result?.frames || []) as TimeLapseFrame[]);
+      setTimelapseMatchStrategy(result?.match_strategy || null);
+      setTimelapseEmptyReason(result?.empty_reason || null);
+      setTimelapseIndex(0);
+    } catch (error) {
+      console.error('Erro ao carregar time-lapse do lote:', error);
+      setTimelapseFrames([]);
+      setTimelapseMatchStrategy(null);
+      setTimelapseEmptyReason(null);
+      setTimelapseError(error instanceof Error ? error.message : 'Não foi possível carregar o time-lapse.');
+    } finally {
+      setTimelapseLoading(false);
+    }
+  }
 
   useEffect(() => {
     return () => {
@@ -127,6 +270,12 @@ export function LoteDetails() {
       setIsPlaying(false);
     }
   }, [isTimelapseOpen]);
+
+  useEffect(() => {
+    if (isTimelapseOpen) {
+      void loadTimeLapse();
+    }
+  }, [id, isTimelapseOpen]);
 
   const handleColheitaSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,16 +297,44 @@ export function LoteDetails() {
   };
 
   const handleTimelapsePlay = () => {
+    if (timelapseFrames.length <= 1) return;
+
     if (isPlaying) {
       clearInterval(timelapseInterval.current!);
       setIsPlaying(false);
     } else {
       timelapseInterval.current = setInterval(() => {
-        setTimelapseIndex(prev => (prev + 1) % 5);
+        setTimelapseIndex(prev => (prev + 1) % timelapseFrames.length);
       }, 1000);
       setIsPlaying(true);
     }
   };
+
+  const currentTimelapseFrame = timelapseFrames[timelapseIndex] || null;
+  const currentTimelapseTimestamp = currentTimelapseFrame?.captured_at || currentTimelapseFrame?.executed_at || null;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+      </div>
+    );
+  }
+
+  if (!lote) {
+    return (
+      <div className="p-6">
+        <Card>
+          <CardContent className="p-8 text-center space-y-4">
+            <p className="text-gray-600">Lote não encontrado.</p>
+            <Button variant="outline" onClick={() => navigate('/lotes')}>
+              Voltar para lotes
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -174,14 +351,14 @@ export function LoteDetails() {
           <div>
             <div className="flex items-center gap-3 mb-2">
               <h1 className="font-['Cormorant_Garamond']" style={{ fontSize: '42px', fontWeight: 700 }}>
-                {lote.id}
+                {lote.codigo_lote}
               </h1>
               <Badge className="bg-[#546A4A] text-white">
-                {lote.stage}
+                {formatFaseLabel(lote.fase_operacional || lote.fase_atual)}
               </Badge>
             </div>
             <p className="text-[#1A1A1A] opacity-70">
-              {lote.variety} • {lote.days} dias de cultivo
+              {lote.produto?.variedade ? `${lote.produto?.nome} • ${lote.produto.variedade}` : lote.produto?.nome || 'Produto não definido'} • {diasCultivo} dias de cultivo
             </p>
           </div>
         </div>
@@ -200,9 +377,10 @@ export function LoteDetails() {
           </CardHeader>
           <CardContent>
             <div className="font-['Cormorant_Garamond']" style={{ fontSize: '32px', fontWeight: 700 }}>
-              {lote.temp}°C
+              {temperaturaAtual !== null && temperaturaAtual !== undefined ? `${temperaturaAtual.toFixed(1)}°C` : 'N/D'}
             </div>
-            <p className="text-xs text-green-600 mt-1">Ideal: 18-22°C</p>
+            <p className="text-xs text-gray-500 mt-1">Temperatura atual</p>
+            <p className="text-xs text-green-600 mt-1">Ideal: {temperaturaIdeal}</p>
           </CardContent>
         </Card>
 
@@ -213,9 +391,10 @@ export function LoteDetails() {
           </CardHeader>
           <CardContent>
             <div className="font-['Cormorant_Garamond']" style={{ fontSize: '32px', fontWeight: 700 }}>
-              {lote.humidity}%
+              {umidadeAtual !== null && umidadeAtual !== undefined ? `${umidadeAtual.toFixed(0)}%` : 'N/D'}
             </div>
-            <p className="text-xs text-green-600 mt-1">Ideal: 80-90%</p>
+            <p className="text-xs text-gray-500 mt-1">Umidade atual</p>
+            <p className="text-xs text-green-600 mt-1">Ideal: {umidadeIdeal}</p>
           </CardContent>
         </Card>
 
@@ -226,28 +405,29 @@ export function LoteDetails() {
           </CardHeader>
           <CardContent>
             <div className="font-['Cormorant_Garamond']" style={{ fontSize: '32px', fontWeight: 700 }}>
-              {lote.co2}
+              {co2Atual !== null && co2Atual !== undefined ? Math.round(co2Atual).toString() : 'N/D'}
             </div>
-            <p className="text-xs text-green-600 mt-1">ppm • Normal</p>
+            <p className="text-xs text-gray-500 mt-1">CO₂ atual</p>
+            <p className="text-xs text-green-600 mt-1">Limite ideal: {co2Ideal}</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm opacity-70">Previsão</CardTitle>
+            <CardTitle className="text-sm opacity-70">{previsaoPrincipal.titulo}</CardTitle>
             <TrendingUp className="w-4 h-4 text-[#A88F52]" />
           </CardHeader>
           <CardContent>
             <div className="font-['Cormorant_Garamond']" style={{ fontSize: '32px', fontWeight: 700 }}>
-              {lote.expectedYield}
+              {previsaoPrincipal.valor}
             </div>
-            <p className="text-xs text-[#1A1A1A] opacity-70 mt-1">Rendimento esperado</p>
+            <p className="text-xs text-[#1A1A1A] opacity-70 mt-1">{previsaoPrincipal.subtitulo}</p>
           </CardContent>
         </Card>
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <Card>
           <CardHeader>
             <CardTitle>Histórico de Temperatura</CardTitle>
@@ -256,12 +436,17 @@ export function LoteDetails() {
             <ResponsiveContainer width="100%" height={250}>
               <LineChart data={tempData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E3E3E3" />
-                <XAxis dataKey="day" label={{ value: 'Dias', position: 'insideBottom', offset: -5 }} />
+                <XAxis dataKey="label" />
                 <YAxis label={{ value: '°C', angle: -90, position: 'insideLeft' }} />
                 <Tooltip />
-                <Line type="monotone" dataKey="value" stroke="#A88F52" strokeWidth={2} />
+                <Line type="monotone" dataKey="temperatura" stroke="#A88F52" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
+            {tempData.length === 0 && (
+              <p className="text-sm text-gray-500 mt-3">
+                Sem histórico de temperatura disponível. Esse gráfico usa as mesmas leituras reais vinculadas ao lote na tela Segurança.
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -273,15 +458,51 @@ export function LoteDetails() {
             <ResponsiveContainer width="100%" height={250}>
               <LineChart data={humidityData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E3E3E3" />
-                <XAxis dataKey="day" label={{ value: 'Dias', position: 'insideBottom', offset: -5 }} />
+                <XAxis dataKey="label" />
                 <YAxis label={{ value: '%', angle: -90, position: 'insideLeft' }} />
                 <Tooltip />
-                <Line type="monotone" dataKey="value" stroke="#546A4A" strokeWidth={2} />
+                <Line type="monotone" dataKey="umidade" stroke="#546A4A" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
+            {humidityData.length === 0 && (
+              <p className="text-sm text-gray-500 mt-3">
+                Sem histórico de umidade disponível. Esse gráfico usa as mesmas leituras reais vinculadas ao lote na tela Segurança.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Histórico de CO₂</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={250}>
+              <LineChart data={co2Data}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E3E3E3" />
+                <XAxis dataKey="label" />
+                <YAxis label={{ value: 'ppm', angle: -90, position: 'insideLeft' }} />
+                <Tooltip />
+                <Line type="monotone" dataKey="co2" stroke="#7C3AED" strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+            {co2Data.length === 0 && (
+              <p className="text-sm text-gray-500 mt-3">
+                Sem histórico de CO₂ disponível. Esse gráfico usa as mesmas leituras reais vinculadas ao lote na tela Segurança.
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      {!historicoDisponivel && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="p-4 text-sm text-amber-900">
+            Não foi encontrado histórico de sensores vinculado diretamente a este lote nas últimas 24 horas.
+            O detalhe tenta localizar o monitoramento por <strong>ID do lote</strong>, depois por <strong>código do lote</strong> e por fim por <strong>sala</strong>.
+          </CardContent>
+        </Card>
+      )}
 
       {/* Info Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -293,27 +514,27 @@ export function LoteDetails() {
           <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <p className="text-sm text-[#1A1A1A] opacity-50 mb-1">Data de Inoculação</p>
-              <p className="text-sm">{new Date(lote.startDate).toLocaleDateString('pt-BR', { dateStyle: 'long' })}</p>
+              <p className="text-sm">{formatDateLong(lote.data_inoculacao || lote.data_inicio)}</p>
             </div>
             <div>
               <p className="text-sm text-[#1A1A1A] opacity-50 mb-1">Dias de Cultivo</p>
-              <p className="text-sm">{lote.days} dias</p>
+              <p className="text-sm">{diasCultivo} dias</p>
             </div>
             <div>
-              <p className="text-sm text-[#1A1A1A] opacity-50 mb-1">Substrato</p>
-              <p className="text-sm">{lote.substrate}</p>
+              <p className="text-sm text-[#1A1A1A] opacity-50 mb-1">Observações</p>
+              <p className="text-sm">{lote.observacoes || 'Não informadas'}</p>
             </div>
             <div>
               <p className="text-sm text-[#1A1A1A] opacity-50 mb-1">Localização</p>
-              <p className="text-sm">{lote.container}</p>
+              <p className="text-sm">{[lote.sala, lote.prateleira].filter(Boolean).join(' • ') || 'Não informada'}</p>
             </div>
             <div>
               <p className="text-sm text-[#1A1A1A] opacity-50 mb-1">Variedade</p>
-              <p className="text-sm">{lote.variety}</p>
+              <p className="text-sm">{lote.produto?.variedade || lote.produto?.nome || 'Não informada'}</p>
             </div>
             <div>
               <p className="text-sm text-[#1A1A1A] opacity-50 mb-1">Status</p>
-              <Badge className="bg-green-500 text-white">Pronto para Colheita</Badge>
+              <Badge className="bg-green-500 text-white">{formatFaseLabel(lote.fase_operacional || lote.fase_atual || lote.status)}</Badge>
             </div>
           </CardContent>
         </Card>
@@ -448,25 +669,63 @@ export function LoteDetails() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Camera className="w-5 h-5 text-[#A88F52]" />
-              Time-lapse do Lote {lote.id}
+              Time-lapse do Lote {lote.codigo_lote}
             </DialogTitle>
             <DialogDescription>
-              Visualize a evolução do lote através das fotos capturadas durante o cultivo
+              Visualize a evolução do lote através das capturas reais persistidas pelo módulo vision.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="relative w-full h-80 bg-gray-100 rounded-lg overflow-hidden">
-              <ImageWithFallback 
-                src={timelapseImages[timelapseIndex].url} 
-                alt={`Timelapse ${timelapseIndex + 1}`} 
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4">
-                <p className="text-white text-sm">
-                  Dia {timelapseImages[timelapseIndex].day} - {timelapseImages[timelapseIndex].stage}
-                </p>
+            {timelapseLoading ? (
+              <div className="flex h-80 items-center justify-center rounded-lg border bg-gray-50">
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Carregando capturas reais do lote...
+                </div>
               </div>
-            </div>
+            ) : currentTimelapseFrame?.preview_url ? (
+              <div className="relative w-full h-80 bg-gray-100 rounded-lg overflow-hidden">
+                <ImageWithFallback
+                  src={currentTimelapseFrame.preview_url}
+                  alt={`Time-lapse ${timelapseIndex + 1}`}
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 space-y-2">
+                  <p className="text-white text-sm">
+                    {currentTimelapseTimestamp
+                      ? new Date(currentTimelapseTimestamp).toLocaleString('pt-BR')
+                      : 'Captura sem timestamp'}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {currentTimelapseFrame.quality_status && (
+                      <Badge className="bg-white/90 text-[#1A1A1A] hover:bg-white/90">
+                        Qualidade: {currentTimelapseFrame.quality_status}
+                      </Badge>
+                    )}
+                    {currentTimelapseFrame.dataset_class && (
+                      <Badge className="bg-white/90 text-[#1A1A1A] hover:bg-white/90">
+                        Dataset: {currentTimelapseFrame.dataset_class}
+                      </Badge>
+                    )}
+                    <Badge className="bg-white/90 text-[#1A1A1A] hover:bg-white/90">
+                      Blocos detectados: {currentTimelapseFrame.blocos_detectados}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex h-80 flex-col items-center justify-center rounded-lg border border-dashed bg-gray-50 px-6 text-center space-y-3">
+                <Camera className="h-8 w-8 text-gray-400" />
+                <div className="space-y-1">
+                  <p className="font-medium text-gray-700">Nenhuma captura real disponível para este lote.</p>
+                  <p className="text-sm text-gray-500">
+                    {timelapseError ||
+                      timelapseEmptyReason ||
+                      'O time-lapse tenta vincular capturas por lote_id e, em fallback, por câmera da mesma sala dentro do período do lote.'}
+                  </p>
+                </div>
+              </div>
+            )}
             
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -474,7 +733,7 @@ export function LoteDetails() {
                   size="sm"
                   variant="outline"
                   onClick={() => setTimelapseIndex(Math.max(0, timelapseIndex - 1))}
-                  disabled={timelapseIndex === 0}
+                  disabled={timelapseLoading || timelapseFrames.length === 0 || timelapseIndex === 0}
                 >
                   Anterior
                 </Button>
@@ -482,6 +741,7 @@ export function LoteDetails() {
                   size="sm"
                   className="bg-[#A88F52] hover:bg-[#8F7742]"
                   onClick={handleTimelapsePlay}
+                  disabled={timelapseLoading || timelapseFrames.length <= 1}
                 >
                   {isPlaying ? (
                     <>
@@ -498,21 +758,21 @@ export function LoteDetails() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => setTimelapseIndex(Math.min(timelapseImages.length - 1, timelapseIndex + 1))}
-                  disabled={timelapseIndex === timelapseImages.length - 1}
+                  onClick={() => setTimelapseIndex(Math.min(timelapseFrames.length - 1, timelapseIndex + 1))}
+                  disabled={timelapseLoading || timelapseFrames.length === 0 || timelapseIndex === timelapseFrames.length - 1}
                 >
                   Próximo
                 </Button>
               </div>
               <p className="text-sm text-gray-500">
-                {timelapseIndex + 1} de {timelapseImages.length}
+                {timelapseFrames.length ? `${timelapseIndex + 1} de ${timelapseFrames.length}` : '0 de 0'}
               </p>
             </div>
 
             <div className="flex gap-1">
-              {timelapseImages.map((_, index) => (
+              {timelapseFrames.map((frame, index) => (
                 <button
-                  key={index}
+                  key={frame.id || index}
                   onClick={() => setTimelapseIndex(index)}
                   className={`flex-1 h-2 rounded-full transition-colors ${
                     index === timelapseIndex ? 'bg-[#A88F52]' : 'bg-gray-200'
@@ -524,8 +784,15 @@ export function LoteDetails() {
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-start gap-2">
               <Info className="w-4 h-4 text-blue-600 mt-0.5" />
               <p className="text-sm text-blue-800">
-                Este time-lapse mostra a evolução do lote durante os {lote.days} dias de cultivo, 
-                desde a inoculação até o ponto ideal de colheita.
+                {timelapseFrames.length
+                  ? `Sequência cronológica de ${timelapseFrames.length} captura(s) reais, vinculadas por ${
+                      timelapseMatchStrategy === 'lote_id'
+                        ? 'lote_id'
+                        : timelapseMatchStrategy === 'single_camera_fallback'
+                          ? 'câmera ativa única do ambiente'
+                          : 'câmera da mesma sala no período do lote'
+                    }.`
+                  : 'Quando houver capturas reais do módulo vision associadas ao lote, elas aparecerão aqui em ordem cronológica.'}
               </p>
             </div>
           </div>
@@ -558,21 +825,21 @@ export function LoteDetails() {
             <div className="bg-gray-50 rounded-lg p-4 space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Lote:</span>
-                <span className="font-medium">{lote.id}</span>
+                <span className="font-medium">{lote.codigo_lote}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Variedade:</span>
-                <span className="font-medium">{lote.variety}</span>
+                <span className="font-medium">{lote.produto?.variedade || lote.produto?.nome || 'Não informada'}</span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Data de Inoculação:</span>
                 <span className="font-medium">
-                  {new Date(lote.startDate).toLocaleDateString('pt-BR')}
+                  {formatDateShort(lote.data_inoculacao || lote.data_inicio)}
                 </span>
               </div>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Localização:</span>
-                <span className="font-medium">{lote.container}</span>
+                <span className="font-medium">{[lote.sala, lote.prateleira].filter(Boolean).join(' • ') || 'Não informada'}</span>
               </div>
             </div>
 
@@ -590,7 +857,7 @@ export function LoteDetails() {
                 onClick={() => {
                   const link = document.createElement('a');
                   link.href = qrCodeUrl;
-                  link.download = `QR-${lote.id}.png`;
+                  link.download = `QR-${lote.codigo_lote}.png`;
                   link.click();
                   toast.success('QR Code baixado com sucesso!');
                 }}

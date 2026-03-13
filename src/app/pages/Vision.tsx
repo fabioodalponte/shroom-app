@@ -42,6 +42,7 @@ interface VisionRun {
   dataset_classification_json?: Record<string, any> | null;
   preview_url?: string | null;
   storage_bucket?: string | null;
+  preview_error?: string | null;
 }
 
 type RemoteStatus = 'ok' | 'failed' | 'pending';
@@ -366,6 +367,9 @@ export function Vision() {
                     <div className="flex flex-col items-center gap-2 text-center">
                       <ImageOff className="h-8 w-8" />
                       <p className="text-sm">Preview indisponivel no Storage</p>
+                      {latestRun.preview_error ? (
+                        <p className="max-w-[260px] text-xs text-red-600">{latestRun.preview_error}</p>
+                      ) : null}
                     </div>
                   </div>
                 )}
@@ -560,6 +564,9 @@ export function Vision() {
                       <div className="flex flex-col items-center gap-2 text-center">
                         <ImageOff className="h-8 w-8" />
                         <p className="text-sm">Preview indisponivel</p>
+                        {selectedRun.preview_error ? (
+                          <p className="max-w-[260px] text-xs text-red-600">{selectedRun.preview_error}</p>
+                        ) : null}
                       </div>
                     </div>
                   )}

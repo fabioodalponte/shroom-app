@@ -667,6 +667,46 @@ app.put("/make-server-5522cecf/lotes/:id", async (c) => {
   }
 });
 
+app.get("/make-server-5522cecf/lotes/:id", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const id = c.req.param('id');
+    const lote = await db.getLoteById(id);
+
+    if (!lote) {
+      return c.json({ error: 'Lote não encontrado' }, 404);
+    }
+
+    return c.json({ lote });
+  } catch (error) {
+    console.error('Erro ao buscar lote:', error);
+    return c.json({ error: error.message }, error.message === 'Não autorizado' ? 401 : 500);
+  }
+});
+
+app.get("/make-server-5522cecf/lotes/:id/timelapse", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const id = c.req.param('id');
+    const limitRaw = c.req.query('limit');
+    const limit = limitRaw ? Number.parseInt(String(limitRaw), 10) : 120;
+
+    const timelapse = await db.getVisionTimelapseRunsByLoteId(id, Number.isFinite(limit) ? limit : 120);
+    if (!timelapse) {
+      return c.json({ error: 'Lote não encontrado' }, 404);
+    }
+
+    return c.json(timelapse);
+  } catch (error) {
+    console.error('Erro ao buscar time-lapse do lote:', error);
+    return c.json({ error: error.message }, error.message === 'Não autorizado' ? 401 : 500);
+  }
+});
+
 app.get("/make-server-5522cecf/lotes/:id/blocos", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];

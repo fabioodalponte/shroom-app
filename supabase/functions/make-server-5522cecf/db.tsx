@@ -1540,19 +1540,33 @@ export async function getControladorSalaById(id: string) {
 /**
  * VISION PIPELINE RUNS
  */
+const DEFAULT_VISION_STORAGE_BUCKET = 'vision-captures';
 const VISION_STORAGE_BUCKET =
   Deno.env.get('SUPABASE_STORAGE_BUCKET') ||
   Deno.env.get('VISION_STORAGE_BUCKET') ||
-  '';
+  DEFAULT_VISION_STORAGE_BUCKET;
 const VISION_PREVIEW_URL_EXPIRES_IN = 60 * 60;
+
+function resolveVisionStorageBucket(run: any) {
+  return (
+    run?.storage_bucket ||
+    run?.raw_result_json?.remote_persistence?.storage_bucket ||
+    run?.raw_result_json?.remote_persistence?.storage_diagnostics?.bucket ||
+    run?.raw_result_json?.storage_bucket ||
+    VISION_STORAGE_BUCKET ||
+    DEFAULT_VISION_STORAGE_BUCKET
+  );
+}
 
 async function attachVisionPreviewUrl(run: any) {
   if (!run) return null;
 
-  if (!run.image_storage_path || !VISION_STORAGE_BUCKET) {
+  const storageBucket = resolveVisionStorageBucket(run);
+
+  if (!run.image_storage_path || !storageBucket) {
     return {
       ...run,
-      storage_bucket: VISION_STORAGE_BUCKET || null,
+      storage_bucket: storageBucket || null,
       preview_url: null,
       preview_expires_in_seconds: null,
     };
@@ -1560,14 +1574,14 @@ async function attachVisionPreviewUrl(run: any) {
 
   const { data, error } = await supabase
     .storage
-    .from(VISION_STORAGE_BUCKET)
+    .from(storageBucket)
     .createSignedUrl(run.image_storage_path, VISION_PREVIEW_URL_EXPIRES_IN);
 
   if (error) {
     console.error('Erro ao criar signed URL da captura vision:', error);
     return {
       ...run,
-      storage_bucket: VISION_STORAGE_BUCKET,
+      storage_bucket: storageBucket,
       preview_url: null,
       preview_expires_in_seconds: null,
       preview_error: error.message,
@@ -1576,10 +1590,50 @@ async function attachVisionPreviewUrl(run: any) {
 
   return {
     ...run,
-    storage_bucket: VISION_STORAGE_BUCKET,
+    storage_bucket: storageBucket,
     preview_url: data?.signedUrl || null,
     preview_expires_in_seconds: VISION_PREVIEW_URL_EXPIRES_IN,
   };
+}
+
+function normalizeTimelapseText(value?: string | null) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function normalizeCameraStreamUrl(value?: string | null) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  try {
+    const url = new URL(raw);
+    url.search = '';
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return raw.replace(/\/$/, '');
+  }
+}
+
+function doesRunMatchCameraUrl(runUrl?: string | null, candidateUrl?: string | null) {
+  const normalizedRun = normalizeCameraStreamUrl(runUrl);
+  const normalizedCandidate = normalizeCameraStreamUrl(candidateUrl);
+  if (!normalizedRun || !normalizedCandidate) return false;
+  if (normalizedRun === normalizedCandidate) return true;
+
+  try {
+    const runParsed = new URL(normalizedRun);
+    const candidateParsed = new URL(normalizedCandidate);
+    return (
+      runParsed.hostname === candidateParsed.hostname &&
+      runParsed.pathname.replace(/\/$/, '') === candidateParsed.pathname.replace(/\/$/, '')
+    );
+  } catch {
+    return normalizedRun === normalizedCandidate;
+  }
 }
 
 interface VisionRunFilters {
@@ -1656,6 +1710,145 @@ export async function getVisionPipelineRunById(id: string) {
 
   if (error) throw error;
   return attachVisionPreviewUrl(data);
+}
+
+export async function getVisionTimelapseRunsByLoteId(loteId: string, limit = 120) {
+  const lote = await getLoteById(loteId);
+  if (!lote) return null;
+
+  const sala = normalizeTimelapseText(lote.sala);
+  const codigo = normalizeTimelapseText(lote.codigo_lote);
+  const cameras = await getCameras();
+  const camerasAtivas = cameras.filter((camera) => normalizeTimelapseText(camera.status || 'ativa') !== 'inativa');
+  const cameraBase = camerasAtivas.length ? camerasAtivas : cameras;
+
+  let matchedCameras = cameraBase.filter((camera) => {
+    const nome = normalizeTimelapseText(camera.nome);
+    const localizacao = normalizeTimelapseText(camera.localizacao);
+    const matchSala =
+      !!sala &&
+      (nome.includes(sala) ||
+        localizacao.includes(sala) ||
+        sala.includes(nome) ||
+        sala.includes(localizacao));
+    const matchCodigo = !!codigo && (nome.includes(codigo) || localizacao.includes(codigo));
+    return matchSala || matchCodigo;
+  });
+
+  const startAt = lote.data_inoculacao || lote.data_inicio || null;
+  const endAt = lote.data_previsao_colheita || null;
+  const fetchLimit = Math.max(Math.min(limit * 3, 360), 120);
+
+  let query = supabase
+    .from('vision_pipeline_runs')
+    .select('*')
+    .order('captured_at', { ascending: true, nullsFirst: false })
+    .order('executed_at', { ascending: true })
+    .limit(fetchLimit);
+
+  if (startAt) {
+    query = query.gte('captured_at', startAt);
+  }
+
+  if (endAt) {
+    query = query.lte('captured_at', endAt);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  const runs = data || [];
+  const loteLinkedRuns = runs.filter((run) => {
+    const linkedLoteId =
+      run?.raw_result_json?.capture_metadata?.lote_id ||
+      run?.raw_result_json?.lote_id ||
+      run?.summary_json?.lote_id ||
+      null;
+
+    return linkedLoteId === loteId;
+  });
+
+  let selectedRuns = loteLinkedRuns;
+  let matchStrategy: 'lote_id' | 'camera_period' | 'single_camera_fallback' | 'empty' = 'lote_id';
+
+  if (!selectedRuns.length) {
+    if (!matchedCameras.length) {
+      if (cameraBase.length === 1) {
+        matchedCameras = [cameraBase[0]];
+      } else if (camerasAtivas.length === 1) {
+        matchedCameras = [camerasAtivas[0]];
+      }
+    }
+
+    const matchedCameraUrls = matchedCameras
+      .map((camera) => String(camera.url_stream || '').trim())
+      .filter(Boolean);
+
+    if (matchedCameraUrls.length) {
+      selectedRuns = runs.filter((run) =>
+        matchedCameraUrls.some((candidateUrl) => doesRunMatchCameraUrl(run.camera_url, candidateUrl))
+      );
+      matchStrategy = selectedRuns.length
+        ? matchedCameras.length === 1 && !sala && !codigo
+          ? 'single_camera_fallback'
+          : 'camera_period'
+        : 'empty';
+    } else {
+      matchStrategy = 'empty';
+    }
+  }
+
+  const limitedRuns = selectedRuns.slice(-limit);
+  const frames = await Promise.all(
+    limitedRuns.map(async (run, index) => {
+      const withPreview = await attachVisionPreviewUrl(run);
+      return {
+        id: withPreview?.id,
+        sequence_index: index,
+        captured_at: withPreview?.captured_at || withPreview?.executed_at || null,
+        executed_at: withPreview?.executed_at || null,
+        preview_url: withPreview?.preview_url || null,
+        image_storage_path: withPreview?.image_storage_path || null,
+        quality_status: withPreview?.quality_status || withPreview?.raw_result_json?.quality_check?.status || null,
+        dataset_class:
+          withPreview?.dataset_class ||
+          withPreview?.dataset_classification_json?.dataset_class ||
+          withPreview?.raw_result_json?.dataset_classification?.dataset_class ||
+          null,
+        blocos_detectados:
+          Number(
+            withPreview?.summary_json?.blocos_detectados ??
+            withPreview?.raw_result_json?.summary?.blocos_detectados ??
+            0
+          ) || 0,
+      };
+    })
+  );
+
+  return {
+    lote: {
+      id: lote.id,
+      codigo_lote: lote.codigo_lote,
+      sala: lote.sala || null,
+      data_inicio: lote.data_inicio || null,
+      data_inoculacao: lote.data_inoculacao || null,
+      data_previsao_colheita: lote.data_previsao_colheita || null,
+    },
+    match_strategy: matchStrategy,
+    matched_cameras: matchedCameras.map((camera) => ({
+      id: camera.id,
+      nome: camera.nome,
+      localizacao: camera.localizacao,
+      url_stream: camera.url_stream || null,
+    })),
+    frame_count: frames.length,
+    frames,
+    empty_reason: frames.length
+      ? null
+      : matchStrategy === 'empty'
+        ? 'Nenhuma captura vision vinculada por lote_id ou por câmera/sala no período do lote.'
+        : 'Nenhuma captura vision encontrada para este lote.',
+  };
 }
 
 /**
