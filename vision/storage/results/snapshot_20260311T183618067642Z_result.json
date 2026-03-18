@@ -1,0 +1,107 @@
+{
+  "executed_at": "2026-03-11T18:36:18.176015+00:00",
+  "mode": "stub",
+  "image_path": "vision/storage/artifacts/2026/03/11/snapshot_20260311T183618067642Z.jpg",
+  "capture_metadata": {
+    "captured_at": "2026-03-11T18:36:18.066732+00:00",
+    "camera_url": "https://cam.cogumelos.net/capture",
+    "http_status": 200,
+    "content_type": "image/jpeg",
+    "size_bytes": 36291,
+    "source": "esp32-cam"
+  },
+  "quality_check": {
+    "status": "too_blurry",
+    "dataset_eligible": false,
+    "metrics": {
+      "resolution": {
+        "width": 800,
+        "height": 600,
+        "total_pixels": 480000
+      },
+      "brightness_mean": 129.64,
+      "contrast_stddev": 51.29,
+      "sharpness_score": 9.5
+    },
+    "flags": {
+      "low_resolution": false,
+      "too_dark": false,
+      "too_bright": false,
+      "too_blurry": true,
+      "invalid_image": false
+    },
+    "thresholds": {
+      "min_width": 640,
+      "min_height": 480,
+      "too_dark_below": 55.0,
+      "too_bright_above": 210.0,
+      "too_blurry_below": 12.0
+    },
+    "error": null
+  },
+  "summary": {
+    "blocos_detectados": 0,
+    "contaminacao_visual_detectada": false,
+    "colonizacao_estimada": null,
+    "quality_status": "too_blurry",
+    "dataset_eligible": false,
+    "dataset_class": "rejected/too_blurry",
+    "remote_persisted": false
+  },
+  "detections": [],
+  "notes": [
+    "Pipeline stub executado sem IA real.",
+    "Use este contrato para ligar persistencia, dataset e futuras rotinas de modelo.",
+    "A etapa atual avalia apenas qualidade basica da imagem."
+  ],
+  "target_labels": [
+    "bloco",
+    "colonizacao",
+    "contaminacao_visual"
+  ],
+  "dataset_classification": {
+    "enabled": true,
+    "applied": true,
+    "dataset_class": "rejected/too_blurry",
+    "quality_status": "too_blurry",
+    "dataset_eligible": false,
+    "target_image_path": "vision/dataset/raw/rejected/too_blurry/snapshot_20260311T183618067642Z.jpg",
+    "target_metadata_path": "vision/dataset/raw/rejected/too_blurry/snapshot_20260311T183618067642Z.json",
+    "method": "hardlink",
+    "error": null
+  },
+  "remote_persistence": {
+    "enabled": true,
+    "remote_persisted": false,
+    "storage_uploaded": false,
+    "db_record_created": false,
+    "image_storage_path": "vision/captures/2026/03/11/snapshot_20260311T183618067642Z.jpg",
+    "record_id": null,
+    "db_table": "vision_pipeline_runs",
+    "retry_manifest_path": "vision/storage/reprocess_queue/remote_retry_snapshot_20260311T183618067642Z_20260311T183618824522Z.json",
+    "error": "Storage upload failed (HTTP 400) bucket=vision-captures storage_path=vision/captures/2026/03/11/snapshot_20260311T183618067642Z.jpg endpoint=https://zgxxbguoijamtbydcxrm.supabase.co/storage/v1/object/vision-captures/vision/captures/2026/03/11/snapshot_20260311T183618067642Z.jpg details={'error': 'Unauthorized', 'message': 'new row violates row-level security policy', 'statusCode': '403'}",
+    "storage_diagnostics": {
+      "http_status": 400,
+      "bucket": "vision-captures",
+      "storage_path": "vision/captures/2026/03/11/snapshot_20260311T183618067642Z.jpg",
+      "endpoint": "https://zgxxbguoijamtbydcxrm.supabase.co/storage/v1/object/vision-captures/vision/captures/2026/03/11/snapshot_20260311T183618067642Z.jpg",
+      "content_type_sent": "image/jpeg",
+      "file_size_bytes": 36291,
+      "response_body": "{\"statusCode\":\"403\",\"error\":\"Unauthorized\",\"message\":\"new row violates row-level security policy\"}",
+      "response_text": "{\"statusCode\":\"403\",\"error\":\"Unauthorized\",\"message\":\"new row violates row-level security policy\"}",
+      "response_json": {
+        "statusCode": "403",
+        "error": "Unauthorized",
+        "message": "new row violates row-level security policy"
+      },
+      "response_useful_fields": {
+        "error": "Unauthorized",
+        "message": "new row violates row-level security policy",
+        "statusCode": "403"
+      }
+    }
+  },
+  "remote_persisted": false,
+  "storage_uploaded": false,
+  "db_record_created": false
+}

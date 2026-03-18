@@ -1,0 +1,82 @@
+{
+  "created_at": "2026-03-11T18:27:08.964117+00:00",
+  "image_path": "vision/storage/artifacts/2026/03/11/snapshot_20260311T182708056055Z.jpg",
+  "remote_state": {
+    "stage": "storage_upload",
+    "storage_path": "vision/captures/2026/03/11/snapshot_20260311T182708056055Z.jpg",
+    "error": "Storage upload failed with HTTP 400",
+    "response": "{\"statusCode\":\"403\",\"error\":\"Unauthorized\",\"message\":\"new row violates row-level security policy\"}"
+  },
+  "pipeline_result": {
+    "executed_at": "2026-03-11T18:27:08.167517+00:00",
+    "mode": "stub",
+    "image_path": "vision/storage/artifacts/2026/03/11/snapshot_20260311T182708056055Z.jpg",
+    "capture_metadata": {
+      "captured_at": "2026-03-11T18:27:08.055045+00:00",
+      "camera_url": "https://cam.cogumelos.net/capture",
+      "http_status": 200,
+      "content_type": "image/jpeg",
+      "size_bytes": 27484,
+      "source": "esp32-cam"
+    },
+    "quality_check": {
+      "status": "too_blurry",
+      "dataset_eligible": false,
+      "metrics": {
+        "resolution": {
+          "width": 800,
+          "height": 600,
+          "total_pixels": 480000
+        },
+        "brightness_mean": 76.23,
+        "contrast_stddev": 40.16,
+        "sharpness_score": 4.67
+      },
+      "flags": {
+        "low_resolution": false,
+        "too_dark": false,
+        "too_bright": false,
+        "too_blurry": true,
+        "invalid_image": false
+      },
+      "thresholds": {
+        "min_width": 640,
+        "min_height": 480,
+        "too_dark_below": 55.0,
+        "too_bright_above": 210.0,
+        "too_blurry_below": 12.0
+      },
+      "error": null
+    },
+    "summary": {
+      "blocos_detectados": 0,
+      "contaminacao_visual_detectada": false,
+      "colonizacao_estimada": null,
+      "quality_status": "too_blurry",
+      "dataset_eligible": false,
+      "dataset_class": "rejected/too_blurry"
+    },
+    "detections": [],
+    "notes": [
+      "Pipeline stub executado sem IA real.",
+      "Use este contrato para ligar persistencia, dataset e futuras rotinas de modelo.",
+      "A etapa atual avalia apenas qualidade basica da imagem."
+    ],
+    "target_labels": [
+      "bloco",
+      "colonizacao",
+      "contaminacao_visual"
+    ],
+    "dataset_classification": {
+      "enabled": true,
+      "applied": true,
+      "dataset_class": "rejected/too_blurry",
+      "quality_status": "too_blurry",
+      "dataset_eligible": false,
+      "target_image_path": "vision/dataset/raw/rejected/too_blurry/snapshot_20260311T182708056055Z.jpg",
+      "target_metadata_path": "vision/dataset/raw/rejected/too_blurry/snapshot_20260311T182708056055Z.json",
+      "method": "hardlink",
+      "error": null
+    }
+  }
+}

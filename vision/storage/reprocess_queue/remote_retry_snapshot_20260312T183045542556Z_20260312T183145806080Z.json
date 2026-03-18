@@ -1,0 +1,105 @@
+{
+  "created_at": "2026-03-12T18:31:45.806370+00:00",
+  "image_path": "vision/storage/artifacts/2026/03/12/snapshot_20260312T183045542556Z.jpg",
+  "remote_state": {
+    "stage": "storage_upload",
+    "storage_path": "vision/captures/2026/03/12/snapshot_20260312T183045542556Z.jpg",
+    "error": "Storage upload failed (network error) bucket=vision-captures storage_path=vision/captures/2026/03/12/snapshot_20260312T183045542556Z.jpg endpoint=https://zgxxbguoijamtbydcxrm.supabase.co/storage/v1/object/vision-captures/vision/captures/2026/03/12/snapshot_20260312T183045542556Z.jpg details=timed out",
+    "response": null,
+    "storage_diagnostics": {
+      "http_status": null,
+      "bucket": "vision-captures",
+      "storage_path": "vision/captures/2026/03/12/snapshot_20260312T183045542556Z.jpg",
+      "endpoint": "https://zgxxbguoijamtbydcxrm.supabase.co/storage/v1/object/vision-captures/vision/captures/2026/03/12/snapshot_20260312T183045542556Z.jpg",
+      "content_type_sent": "image/jpeg",
+      "file_size_bytes": 18131,
+      "response_body": null,
+      "response_text": null,
+      "response_json": null,
+      "response_useful_fields": null
+    }
+  },
+  "pipeline_result": {
+    "executed_at": "2026-03-12T18:30:45.744517+00:00",
+    "mode": "yolov8",
+    "image_path": "vision/storage/artifacts/2026/03/12/snapshot_20260312T183045542556Z.jpg",
+    "capture_metadata": {
+      "captured_at": "2026-03-12T18:30:45.541467+00:00",
+      "camera_url": "https://cam.cogumelos.net/capture",
+      "http_status": 200,
+      "content_type": "image/jpeg",
+      "size_bytes": 18131,
+      "source": "esp32-cam",
+      "capture_attempt": 2,
+      "capture_attempts_total": 3,
+      "request_timeout_seconds": 15
+    },
+    "quality_check": {
+      "status": "too_dark",
+      "dataset_eligible": false,
+      "metrics": {
+        "resolution": {
+          "width": 800,
+          "height": 600,
+          "total_pixels": 480000
+        },
+        "brightness_mean": 7.77,
+        "contrast_stddev": 7.03,
+        "sharpness_score": 2.7
+      },
+      "flags": {
+        "low_resolution": false,
+        "too_dark": true,
+        "too_bright": false,
+        "too_blurry": true,
+        "invalid_image": false
+      },
+      "thresholds": {
+        "min_width": 640,
+        "min_height": 480,
+        "too_dark_below": 55.0,
+        "too_bright_above": 210.0,
+        "too_blurry_below": 12.0
+      },
+      "error": null
+    },
+    "block_detection": {
+      "enabled": true,
+      "model": "vision/models/block_detector.pt",
+      "device": "cpu",
+      "blocos_detectados": 0,
+      "detections": [],
+      "error": "model file not found: vision/models/block_detector.pt"
+    },
+    "summary": {
+      "blocos_detectados": 0,
+      "contaminacao_visual_detectada": false,
+      "colonizacao_estimada": null,
+      "quality_status": "too_dark",
+      "dataset_eligible": false,
+      "dataset_class": "rejected/too_dark"
+    },
+    "detections": [],
+    "notes": [
+      "Pipeline executado com quality check local e detector inicial de blocos.",
+      "A deteccao de colonizacao e contaminacao_visual ainda nao esta implementada.",
+      "Se o modelo YOLO nao existir, a deteccao retorna lista vazia sem quebrar o fluxo."
+    ],
+    "target_labels": [
+      "bloco",
+      "colonizacao",
+      "contaminacao_visual"
+    ],
+    "dataset_classification": {
+      "enabled": true,
+      "applied": true,
+      "dataset_class": "rejected/too_dark",
+      "quality_status": "too_dark",
+      "dataset_eligible": false,
+      "target_image_path": "vision/dataset/raw/rejected/too_dark/snapshot_20260312T183045542556Z.jpg",
+      "target_metadata_path": "vision/dataset/raw/rejected/too_dark/snapshot_20260312T183045542556Z.json",
+      "method": "hardlink",
+      "error": null
+    }
+  }
+}

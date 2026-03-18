@@ -1,0 +1,60 @@
+{
+  "executed_at": "2026-03-11T18:01:57.374260+00:00",
+  "mode": "stub",
+  "image_path": "vision/storage/artifacts/2026/03/11/snapshot_20260311T180157263335Z.jpg",
+  "capture_metadata": {
+    "captured_at": "2026-03-11T18:01:57.262423+00:00",
+    "camera_url": "https://cam.cogumelos.net/capture",
+    "http_status": 200,
+    "content_type": "image/jpeg",
+    "size_bytes": 34786,
+    "source": "esp32-cam"
+  },
+  "quality_check": {
+    "status": "too_blurry",
+    "dataset_eligible": false,
+    "metrics": {
+      "resolution": {
+        "width": 800,
+        "height": 600,
+        "total_pixels": 480000
+      },
+      "brightness_mean": 125.64,
+      "contrast_stddev": 62.14,
+      "sharpness_score": 9.0
+    },
+    "flags": {
+      "low_resolution": false,
+      "too_dark": false,
+      "too_bright": false,
+      "too_blurry": true,
+      "invalid_image": false
+    },
+    "thresholds": {
+      "min_width": 640,
+      "min_height": 480,
+      "too_dark_below": 55.0,
+      "too_bright_above": 210.0,
+      "too_blurry_below": 12.0
+    },
+    "error": null
+  },
+  "summary": {
+    "blocos_detectados": 0,
+    "contaminacao_visual_detectada": false,
+    "colonizacao_estimada": null,
+    "quality_status": "too_blurry",
+    "dataset_eligible": false
+  },
+  "detections": [],
+  "notes": [
+    "Pipeline stub executado sem IA real.",
+    "Use este contrato para ligar persistencia, dataset e futuras rotinas de modelo.",
+    "A etapa atual avalia apenas qualidade basica da imagem."
+  ],
+  "target_labels": [
+    "bloco",
+    "colonizacao",
+    "contaminacao_visual"
+  ]
+}
