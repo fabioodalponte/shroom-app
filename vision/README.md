@@ -152,6 +152,13 @@ Comportamento:
    - `detections`
    - `block_detection`
 
+Robustez no Raspberry:
+
+1. a inferencia roda isolada em subprocesso por padrao
+2. se `torch`/`torchvision`/`opencv` dispararem `Illegal instruction`, o pipeline principal nao cai
+3. o resultado volta com erro estruturado em `block_detection.error`
+4. use `vision/scripts/check_inference_env.py` para validar o ambiente passo a passo
+
 Formato retornado:
 
 ```json
@@ -192,6 +199,35 @@ python3 -m vision.runner quality-latest
 python3 -m vision.runner dataset-classify-latest
 python3 -m vision.runner detect-blocks-latest
 ```
+
+## Validacao do ambiente de inferencia no Raspberry
+
+Para diagnosticar incompatibilidade binaria:
+
+```bash
+python3 vision/scripts/check_inference_env.py \
+  --config vision/config/vision_config.json
+```
+
+O checker valida em subprocessos separados:
+
+1. `import torch`
+2. `import torchvision`
+3. `import ultralytics`
+4. load do modelo
+5. inferencia minima na captura mais recente
+
+Se alguma etapa morrer com `SIGILL`, o JSON final vai mostrar qual foi a etapa.
+
+## Dependencias recomendadas para Raspberry
+
+Para Raspberry, prefira instalar as dependencias do modulo `vision` assim:
+
+```bash
+python3 -m pip install -r vision/requirements.raspberry.txt
+```
+
+`torch` e `torchvision` devem ser instalados separadamente com uma dupla compativel com a arquitetura e a versao do Python da placa.
 
 ## Vinculo explicito com lote
 

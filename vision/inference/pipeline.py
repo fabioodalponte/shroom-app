@@ -118,6 +118,7 @@ class VisionInferencePipeline:
                 "lote_id": lote_id,
                 "blocos_detectados": block_detection["blocos_detectados"],
                 "confianca_media_blocos": average_detection_confidence,
+                "block_detection_error": block_detection.get("error"),
                 "contaminacao_visual_detectada": False,
                 "colonizacao_estimada": None,
                 "quality_status": quality_check["status"],
