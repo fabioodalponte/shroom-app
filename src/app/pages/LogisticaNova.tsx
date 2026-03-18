@@ -18,7 +18,13 @@ import {
   usePedidos
 } from '../../hooks/useApi';
 import { fetchServer } from '../../utils/supabase/client';
-import { format } from 'date-fns';
+import { format, isValid, parseISO } from 'date-fns';
+
+function parseDateValue(value?: string | null) {
+  if (!value) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
+}
 
 export function Logistica() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -64,7 +70,7 @@ export function Logistica() {
   // Estatísticas
   const rotasAtivas = rotas.filter((r: any) => ['Pendente', 'Em Andamento'].includes(r.status));
   const entregasHoje = rotas.filter((r: any) => 
-    format(new Date(r.data_rota), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd')
+    parseDateValue(r.data_rota) ? format(parseDateValue(r.data_rota)!, 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd') : false
   );
   const concluidas = rotas.filter((r: any) => r.status === 'Concluída');
 
@@ -548,7 +554,7 @@ function RotaCard({ rota, onIniciar, onFinalizar, onCancelar, getStatusLabel, ge
                 Motorista: {rota.motorista?.nome} • {totalParadas} paradas
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                Data: {format(new Date(rota.data_rota), 'dd/MM/yyyy')}
+                Data: {parseDateValue(rota.data_rota) ? format(parseDateValue(rota.data_rota)!, 'dd/MM/yyyy') : '-'}
               </p>
             </div>
           </div>

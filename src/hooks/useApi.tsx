@@ -166,6 +166,24 @@ export function useLotes() {
   return useGet('/lotes');
 }
 
+export function useSalas() {
+  return useGet('/salas');
+}
+
+export function useCreateSala() {
+  return usePost('/salas', {
+    showSuccessToast: true,
+    successMessage: 'Sala cadastrada com sucesso!',
+  });
+}
+
+export function useUpdateSala(id: string) {
+  return usePut(`/salas/${id}`, {
+    showSuccessToast: true,
+    successMessage: 'Sala atualizada com sucesso!',
+  });
+}
+
 export function useCreateLote() {
   return usePost('/lotes', {
     showSuccessToast: true,

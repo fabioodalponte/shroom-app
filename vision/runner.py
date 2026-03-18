@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .active_lot_resolver import ActiveLoteResolution, ActiveLoteResolver
 from .capture.esp32_cam_capture import ESP32CamCaptureClient, capture_snapshot_safe
 from .config.loader import load_vision_config
 from .hardware.light_control import LightControlError, turn_light_off, turn_light_on
@@ -30,6 +31,7 @@ class VisionOrchestrator:
         self.artifact_store = ArtifactStore(config)
         self.dataset_classifier = DatasetClassifier(config, logger=self.logger)
         self.remote_persister = VisionRemotePersister(config, logger=self.logger, artifact_store=self.artifact_store)
+        self.active_lot_resolver = ActiveLoteResolver(config, logger=self.logger)
 
     def status(self) -> dict[str, Any]:
         """Return static runtime status without touching camera or model."""
@@ -37,6 +39,7 @@ class VisionOrchestrator:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "enabled": self.config.get("enabled", False),
             "camera_url": self.config.get("capture", {}).get("camera_url"),
+            "default_lote_id": self.config.get("capture", {}).get("default_lote_id"),
             "capture_timeout_seconds": self.config.get("capture", {}).get("request_timeout_seconds", 15),
             "capture_retries": self.config.get("capture", {}).get("request_retries", 3),
             "capture_retry_backoff_seconds": self.config.get("capture", {}).get("retry_backoff_seconds", 1.0),
@@ -86,7 +89,42 @@ class VisionOrchestrator:
             "metadata": metadata,
         }
 
-    def pipeline_once(self) -> dict[str, Any]:
+    def _resolve_lote_id(self, lote_id: str | None = None) -> str | None:
+        explicit = str(lote_id or "").strip()
+        if explicit:
+            return explicit
+
+        configured = str(self.config.get("capture", {}).get("default_lote_id", "")).strip()
+        return configured or None
+
+    def _resolve_scheduled_lote_context(self, lote_id: str | None = None) -> ActiveLoteResolution:
+        explicit = str(lote_id or "").strip()
+        if explicit:
+            return ActiveLoteResolution(
+                lote_id=explicit,
+                strategy="explicit_cli_lote_id",
+                reason="provided_by_runner_argument",
+            )
+
+        configured = str(self.config.get("capture", {}).get("default_lote_id", "")).strip()
+        if configured:
+            return ActiveLoteResolution(
+                lote_id=configured,
+                strategy="default_lote_id",
+                reason="configured_in_vision_config",
+            )
+
+        try:
+            return self.active_lot_resolver.resolve()
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.logger.warning("vision active_lot_resolution_failed error=%s", exc)
+            return ActiveLoteResolution(
+                lote_id=None,
+                strategy="fallback_without_lote",
+                reason=f"active_lot_resolution_error:{exc}",
+            )
+
+    def pipeline_once(self, lote_id: str | None = None) -> dict[str, Any]:
         """Run the full placeholder pipeline once without crashing on capture errors."""
         self.logger.info("vision capture_pipeline_start mode=pipeline_once")
         capture_result = capture_snapshot_safe(self.capture_client, self.logger)
@@ -101,6 +139,9 @@ class VisionOrchestrator:
 
         image_bytes = capture_result["image_bytes"]
         capture_metadata = capture_result["metadata"]
+        resolved_lote_id = self._resolve_lote_id(lote_id)
+        if resolved_lote_id:
+            capture_metadata["lote_id"] = resolved_lote_id
         saved_image = self.artifact_store.save_snapshot(image_bytes, capture_metadata)
         self.logger.info("snapshot_saved image_path=%s", saved_image)
 
@@ -209,12 +250,13 @@ class VisionOrchestrator:
             "block_detection": detection_result,
         }
 
-    def scheduled_capture(self) -> dict[str, Any]:
+    def scheduled_capture(self, lote_id: str | None = None) -> dict[str, Any]:
         """Run the full pipeline with optional room lighting control."""
         lighting_config = self.config.get("lighting", {})
         lighting_enabled = bool(lighting_config.get("enabled", True))
         warmup_seconds = max(0.0, float(lighting_config.get("warmup_seconds", 8)))
         cooldown_seconds = max(0.0, float(lighting_config.get("cooldown_seconds", 1)))
+        active_lot_resolution = self._resolve_scheduled_lote_context(lote_id)
 
         light_on_attempted = False
         light_on_ok: bool | None = None
@@ -225,6 +267,24 @@ class VisionOrchestrator:
 
         try:
             self.logger.info("vision capture_pipeline_start mode=scheduled_capture")
+            if active_lot_resolution.lote_id:
+                self.logger.info(
+                    "vision active_lot_found lote_id=%s codigo=%s strategy=%s reason=%s sala=%s camera=%s",
+                    active_lot_resolution.lote_id,
+                    active_lot_resolution.lote_codigo,
+                    active_lot_resolution.strategy,
+                    active_lot_resolution.reason,
+                    active_lot_resolution.sala,
+                    active_lot_resolution.camera_name,
+                )
+            else:
+                self.logger.warning(
+                    "vision active_lot_not_found strategy=%s reason=%s sala=%s camera=%s",
+                    active_lot_resolution.strategy,
+                    active_lot_resolution.reason,
+                    active_lot_resolution.sala,
+                    active_lot_resolution.camera_name,
+                )
             if lighting_enabled:
                 light_on_attempted = True
                 try:
@@ -238,6 +298,7 @@ class VisionOrchestrator:
                         "stage": "light_on",
                         "error": str(exc),
                         "execution_mode": "scheduled_capture",
+                        "active_lot_resolution": active_lot_resolution.to_dict(),
                         "lighting": {
                             "enabled": lighting_enabled,
                             "warmup_seconds": warmup_seconds,
@@ -256,8 +317,9 @@ class VisionOrchestrator:
             else:
                 self.logger.info("vision lighting_disabled_skip_light_control")
 
-            result = self.pipeline_once()
+            result = self.pipeline_once(lote_id=active_lot_resolution.lote_id)
             result["execution_mode"] = "scheduled_capture"
+            result["active_lot_resolution"] = active_lot_resolution.to_dict()
             result["lighting"] = {
                 "enabled": lighting_enabled,
                 "warmup_seconds": warmup_seconds,
@@ -315,6 +377,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(Path(__file__).resolve().parent / "config" / "vision_config.json"),
         help="Path to the vision config JSON file",
     )
+    parser.add_argument(
+        "--lote-id",
+        default=None,
+        help="Optional lote_id to persist explicitly in vision runs",
+    )
     return parser
 
 
@@ -333,7 +400,7 @@ def main() -> int:
             return 0
 
         if args.command == "pipeline-once":
-            print_json(orchestrator.pipeline_once())
+            print_json(orchestrator.pipeline_once(lote_id=args.lote_id))
             return 0
 
         if args.command == "quality-latest":
@@ -349,7 +416,7 @@ def main() -> int:
             return 0
 
         if args.command == "scheduled-capture":
-            print_json(orchestrator.scheduled_capture())
+            print_json(orchestrator.scheduled_capture(lote_id=args.lote_id))
             return 0
 
         raise ValueError(f"Unsupported command: {args.command}")

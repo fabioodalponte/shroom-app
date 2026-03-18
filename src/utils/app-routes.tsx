@@ -25,6 +25,7 @@ import { Debug } from "../app/pages/Debug";
 import { OperacaoInoculacao } from "../app/pages/OperacaoInoculacao";
 import { OperacaoFrutificacao } from "../app/pages/OperacaoFrutificacao";
 import { CatalogoCogumelos } from "../app/pages/CatalogoCogumelos";
+import { Salas } from "../app/pages/Salas";
 
 export const router = createBrowserRouter([
   {
@@ -64,8 +65,16 @@ export const router = createBrowserRouter([
         Component: CreateLote,
       },
       {
+        path: "lotes/:id/editar",
+        Component: CreateLote,
+      },
+      {
         path: "lotes/:id",
         Component: LoteDetails,
+      },
+      {
+        path: "salas",
+        Component: Salas,
       },
       {
         path: "colheita",

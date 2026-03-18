@@ -22,6 +22,7 @@ class BlockDetectorHandle:
 
 DEFAULT_MODEL_PATH = Path("vision/models/block_detector.pt")
 DEFAULT_DEVICE = "cpu"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_block_detector(
@@ -31,7 +32,8 @@ def load_block_detector(
     """Load the YOLOv8 detector if the dependency and model are available."""
     inference_config = (config or {}).get("inference", {})
     enabled = bool(inference_config.get("enabled", True))
-    model_path = Path(inference_config.get("model", DEFAULT_MODEL_PATH)).expanduser()
+    configured_model_path = Path(inference_config.get("model", DEFAULT_MODEL_PATH)).expanduser()
+    model_path = configured_model_path if configured_model_path.is_absolute() else (PROJECT_ROOT / configured_model_path).resolve()
     device = str(inference_config.get("device", DEFAULT_DEVICE) or DEFAULT_DEVICE)
 
     if not enabled:

@@ -9,7 +9,7 @@ import { Label } from '../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner@2.0.3';
 import { fetchServer } from '../../utils/supabase/client';
-import { format } from 'date-fns';
+import { format, isValid, parseISO } from 'date-fns';
 import { useNavigate } from 'react-router';
 
 interface Compra {
@@ -35,6 +35,12 @@ interface Fornecedor {
   email?: string;
 }
 
+function parseDateValue(value?: string | null) {
+  if (!value) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
+}
+
 export function Compras() {
   const navigate = useNavigate();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -49,7 +55,7 @@ export function Compras() {
     categoria: 'Substrato',
     tipo_custo: 'Variável' as 'Fixo' | 'Variável',
     valor_total: '',
-    data_compra: new Date().toISOString().split('T')[0],
+    data_compra: format(new Date(), 'yyyy-MM-dd'),
     data_vencimento: '',
     status_pagamento: 'Pendente',
     observacoes: '',
@@ -163,7 +169,7 @@ export function Compras() {
         categoria: 'Substrato',
         tipo_custo: 'Variável',
         valor_total: '',
-        data_compra: new Date().toISOString().split('T')[0],
+        data_compra: format(new Date(), 'yyyy-MM-dd'),
         data_vencimento: '',
         status_pagamento: 'Pendente',
         observacoes: '',
@@ -249,7 +255,8 @@ export function Compras() {
     .filter(c => c.status_pagamento === 'Pendente' || c.status_pagamento === 'Atrasado')
     .reduce((sum, c) => sum + parseFloat(c.valor_total || '0'), 0);
   const comprasMesAtual = compras.filter(c => {
-    const dataCompra = new Date(c.data_compra);
+    const dataCompra = parseDateValue(c.data_compra);
+    if (!dataCompra) return false;
     const hoje = new Date();
     return dataCompra.getMonth() === hoje.getMonth() && dataCompra.getFullYear() === hoje.getFullYear();
   });
@@ -575,6 +582,10 @@ export function Compras() {
           ) : (
             <div className="space-y-3">
               {filteredCompras.map((compra) => (
+                (() => {
+                  const dataCompra = parseDateValue(compra.data_compra);
+                  const dataVencimento = parseDateValue(compra.data_vencimento);
+                  return (
                 <div
                   key={compra.id}
                   className="flex items-center justify-between p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
@@ -594,8 +605,8 @@ export function Compras() {
                       {compra.fornecedor?.nome} • {compra.fornecedor?.tipo_fornecedor}
                     </p>
                     <p className="text-xs text-gray-500 mt-1">
-                      Compra: {format(new Date(compra.data_compra), 'dd/MM/yyyy')}
-                      {compra.data_vencimento && ` • Venc: ${format(new Date(compra.data_vencimento), 'dd/MM/yyyy')}`}
+                      Compra: {dataCompra ? format(dataCompra, 'dd/MM/yyyy') : '-'}
+                      {dataVencimento && ` • Venc: ${format(dataVencimento, 'dd/MM/yyyy')}`}
                     </p>
                     {compra.observacoes && (
                       <p className="text-xs text-gray-500 mt-1 italic">
@@ -614,6 +625,8 @@ export function Compras() {
                     )}
                   </div>
                 </div>
+                  );
+                })()
               ))}
             </div>
           )}

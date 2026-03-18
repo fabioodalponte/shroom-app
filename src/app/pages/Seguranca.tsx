@@ -27,7 +27,7 @@ import {
   X
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
-import { format } from 'date-fns';
+import { format, isValid, parseISO } from 'date-fns';
 import { fetchServer } from '../../utils/supabase/client';
 
 interface SensorData {
@@ -239,6 +239,12 @@ function normalizeCameraControls(payload: Record<string, any> | null | undefined
     vflip: Boolean(Number(payload?.vflip ?? 0)),
     exposureCtrl: Boolean(Number(payload?.exposure_ctrl ?? 1)),
   };
+}
+
+function parseDateValue(value?: string | null) {
+  if (!value) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
 }
 
 function buildCameraControlUrl(
@@ -897,7 +903,8 @@ export function Seguranca() {
       atrasados: lotes.filter((lote) => {
         if (!['incubacao', 'pronto_para_frutificacao'].includes(String(lote.fase_operacional || ''))) return false;
         if (!lote.data_prevista_fim_incubacao || lote.data_real_fim_incubacao) return false;
-        return new Date(lote.data_prevista_fim_incubacao) < agora;
+        const dataPrevista = parseDateValue(lote.data_prevista_fim_incubacao);
+        return !!dataPrevista && dataPrevista < agora;
       }).length,
     };
   }, [lotes]);
@@ -1173,7 +1180,7 @@ export function Seguranca() {
           Segurança & Monitoramento
         </h1>
         <p className="text-[#1A1A1A] opacity-70 mt-1">
-          Sensores IoT em tempo real, câmeras e análise de risco de contaminação
+          Painel operacional por sala com sensores IoT em tempo real, câmeras e análise de risco de contaminação
         </p>
       </div>
 
@@ -1376,7 +1383,8 @@ export function Seguranca() {
             lote.data_prevista_fim_incubacao &&
             !lote.data_real_fim_incubacao &&
             ['incubacao', 'pronto_para_frutificacao'].includes(String(lote.fase_operacional || '')) &&
-            new Date(lote.data_prevista_fim_incubacao) < new Date(),
+            parseDateValue(lote.data_prevista_fim_incubacao) &&
+            parseDateValue(lote.data_prevista_fim_incubacao)! < new Date(),
           );
 
 	        return (
@@ -1464,7 +1472,7 @@ export function Seguranca() {
                     <div>
                       <h4 className="font-semibold">Incubação acima do previsto</h4>
                       <p className="mt-1">
-                        Previsão encerrada em {lote.data_prevista_fim_incubacao ? format(new Date(lote.data_prevista_fim_incubacao), 'dd/MM/yyyy') : '--'}.
+                        Previsão encerrada em {parseDateValue(lote.data_prevista_fim_incubacao) ? format(parseDateValue(lote.data_prevista_fim_incubacao)!, 'dd/MM/yyyy') : '--'}.
                         Revise a colonização e avance para frutificação apenas se o lote estiver pronto.
                       </p>
                     </div>

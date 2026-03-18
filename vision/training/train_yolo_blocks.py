@@ -5,6 +5,12 @@ from __future__ import annotations
 import argparse
 import shutil
 from pathlib import Path
+import sys
+
+if __package__ in (None, ""):
+    sys.path.append(str(Path(__file__).resolve().parents[2]))
+
+from vision.training.dataset_utils import collect_dataset_issues
 
 
 DATASET_ROOT = Path("vision/dataset")
@@ -37,6 +43,14 @@ def validate_dataset() -> None:
         raise FileNotFoundError(f"No training images found in {TRAIN_IMAGES}")
     if not any(VAL_IMAGES.iterdir()):
         raise FileNotFoundError(f"No validation images found in {VAL_IMAGES}")
+
+    train_issues = collect_dataset_issues(TRAIN_IMAGES, TRAIN_LABELS, allow_missing_labels=False)
+    val_issues = collect_dataset_issues(VAL_IMAGES, VAL_LABELS, allow_missing_labels=False)
+
+    if not train_issues["ok"]:
+        raise ValueError(f"Training dataset is inconsistent: {train_issues}")
+    if not val_issues["ok"]:
+        raise ValueError(f"Validation dataset is inconsistent: {val_issues}")
 
 
 def write_dataset_yaml() -> Path:

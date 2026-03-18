@@ -5,7 +5,13 @@ import { Input } from '../../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Badge } from '../../components/ui/badge';
 import { useEstoque, useProdutos } from '../../hooks/useApi';
-import { format, differenceInDays } from 'date-fns';
+import { format, differenceInDays, isValid, parseISO } from 'date-fns';
+
+function parseDateValue(value?: string | null) {
+  if (!value) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
+}
 
 export function Estoque() {
   const [searchTerm, setSearchTerm] = useState('');
@@ -65,14 +71,16 @@ export function Estoque() {
   };
 
   const isExpiringSoon = (dataValidade: string | null) => {
-    if (!dataValidade) return false;
-    const days = differenceInDays(new Date(dataValidade), new Date());
+    const parsed = parseDateValue(dataValidade);
+    if (!parsed) return false;
+    const days = differenceInDays(parsed, new Date());
     return days <= 3 && days >= 0;
   };
 
   const isExpired = (dataValidade: string | null) => {
-    if (!dataValidade) return false;
-    return new Date(dataValidade) < new Date();
+    const parsed = parseDateValue(dataValidade);
+    if (!parsed) return false;
+    return parsed < new Date();
   };
 
   if (estoqueLoading || produtosLoading) {
@@ -192,6 +200,7 @@ export function Estoque() {
               {filteredEstoque.map((item) => {
                 const expiringSoon = isExpiringSoon(item.data_validade);
                 const expired = isExpired(item.data_validade);
+                const dataValidade = parseDateValue(item.data_validade);
 
                 return (
                   <div
@@ -250,10 +259,10 @@ export function Estoque() {
                                 expiringSoon ? 'text-yellow-600' :
                                 'text-gray-900'
                               }`}>
-                                {format(new Date(item.data_validade), 'dd/MM/yyyy')}
-                                {!expired && !expiringSoon && item.data_validade && (
+                                {dataValidade ? format(dataValidade, 'dd/MM/yyyy') : '-'}
+                                {!expired && !expiringSoon && dataValidade && (
                                   <span className="text-xs text-gray-500 ml-1">
-                                    ({differenceInDays(new Date(item.data_validade), new Date())} dias)
+                                    ({differenceInDays(dataValidade, new Date())} dias)
                                   </span>
                                 )}
                               </p>

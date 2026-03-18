@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
@@ -43,6 +44,12 @@ interface VisionRun {
   preview_url?: string | null;
   storage_bucket?: string | null;
   preview_error?: string | null;
+}
+
+interface VisionDetection {
+  label: string;
+  confidence: number | null;
+  bbox: [number, number, number, number];
 }
 
 type RemoteStatus = 'ok' | 'failed' | 'pending';
@@ -121,6 +128,68 @@ function getRemoteStatusClassName(status: RemoteStatus) {
   return 'border-amber-200 bg-amber-50 text-amber-700';
 }
 
+function getVisionDetections(run?: VisionRun | null): VisionDetection[] {
+  const candidates = [
+    run?.raw_result_json?.detections,
+    run?.summary_json?.detections,
+    run?.raw_result_json?.summary?.detections,
+  ];
+
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+
+    return candidate
+      .map((item) => {
+        const bbox = Array.isArray(item?.bbox) ? item.bbox.map((value: unknown) => Number(value)) : [];
+        if (bbox.length !== 4 || bbox.some((value) => !Number.isFinite(value))) {
+          return null;
+        }
+
+        const [rawX1, rawY1, rawX2, rawY2] = bbox;
+        const x1 = Math.min(rawX1, rawX2);
+        const y1 = Math.min(rawY1, rawY2);
+        const x2 = Math.max(rawX1, rawX2);
+        const y2 = Math.max(rawY1, rawY2);
+
+        if (x2 <= x1 || y2 <= y1) {
+          return null;
+        }
+
+        const confidenceRaw = Number(item?.confidence ?? item?.score ?? item?.conf ?? NaN);
+        return {
+          label: String(item?.label || item?.class_name || item?.class || 'bloco'),
+          confidence: Number.isFinite(confidenceRaw) ? confidenceRaw : null,
+          bbox: [x1, y1, x2, y2] as [number, number, number, number],
+        };
+      })
+      .filter((item): item is VisionDetection => Boolean(item));
+  }
+
+  return [];
+}
+
+function getDetectedBlocksCount(run?: VisionRun | null) {
+  const explicitCount = Number(
+    run?.summary_json?.blocos_detectados ??
+    run?.raw_result_json?.summary?.blocos_detectados ??
+    run?.raw_result_json?.block_detection?.blocos_detectados ??
+    NaN,
+  );
+
+  if (Number.isFinite(explicitCount)) {
+    return Math.max(0, Math.round(explicitCount));
+  }
+
+  return getVisionDetections(run).length;
+}
+
+function formatConfidencePercent(value?: number | null) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null;
+  const numericValue = Number(value);
+  const percent = numericValue <= 1 ? numericValue * 100 : numericValue;
+  return `${Math.round(percent)}%`;
+}
+
 function buildVisionQuery(filters: { qualityStatus: string; remoteStatus: string; days: string; limit?: number }) {
   const params = new URLSearchParams();
 
@@ -164,6 +233,7 @@ function MetricCard({ label, value, helper }: { label: string; value: string; he
 }
 
 export function Vision() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -172,10 +242,12 @@ export function Vision() {
   const [qualityStatusFilter, setQualityStatusFilter] = useState('all');
   const [remoteStatusFilter, setRemoteStatusFilter] = useState('all');
   const [daysFilter, setDaysFilter] = useState('7');
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<VisionRun | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [showDetectionOverlay, setShowDetectionOverlay] = useState(true);
+  const [selectedImageSize, setSelectedImageSize] = useState<{ width: number; height: number } | null>(null);
+  const selectedRunId = searchParams.get('run');
 
   const loadVisionData = useCallback(async (withRefreshing = false) => {
     try {
@@ -215,24 +287,73 @@ export function Vision() {
     void loadVisionData();
   }, [loadVisionData]);
 
-  const openRunDetails = useCallback(async (runId: string) => {
-    try {
-      setSelectedRunId(runId);
-      setDetailsLoading(true);
-      setDetailsError(null);
-      const response = await fetchServer(`/vision/runs/${runId}`);
-      setSelectedRun(response?.run || null);
-    } catch (err: any) {
-      console.error('Erro ao carregar detalhe da captura vision:', err);
-      setDetailsError(err?.message || 'Erro ao carregar detalhes da captura');
-      setSelectedRun(null);
-    } finally {
-      setDetailsLoading(false);
+  const updateSelectedRunQuery = useCallback((runId: string | null) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (runId) {
+      nextParams.set('run', runId);
+    } else {
+      nextParams.delete('run');
     }
-  }, []);
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const openRunDetails = useCallback((runId: string) => {
+    if (!runId || runId === selectedRunId) return;
+    updateSelectedRunQuery(runId);
+  }, [selectedRunId, updateSelectedRunQuery]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      setSelectedRun(null);
+      setDetailsError(null);
+      setDetailsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadSelectedRun() {
+      try {
+        setDetailsLoading(true);
+        setDetailsError(null);
+        const response = await fetchServer(`/vision/runs/${selectedRunId}`);
+        if (!cancelled) {
+          setSelectedRun(response?.run || null);
+          console.debug('[vision] run selected', {
+            run_id: selectedRunId,
+            executed_at: response?.run?.executed_at || null,
+            captured_at: response?.run?.captured_at || null,
+          });
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          console.error('Erro ao carregar detalhe da captura vision:', err);
+          setDetailsError(err?.message || 'Erro ao carregar detalhes da captura');
+          setSelectedRun(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setDetailsLoading(false);
+        }
+      }
+    }
+
+    void loadSelectedRun();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    setSelectedImageSize(null);
+    setShowDetectionOverlay(true);
+  }, [selectedRunId]);
 
   const latestRemote = useMemo(() => getRemotePersistence(latestRun), [latestRun]);
   const latestRemoteStatus = useMemo(() => getRemoteStatus(latestRun), [latestRun]);
+  const selectedRunDetections = useMemo(() => getVisionDetections(selectedRun), [selectedRun]);
+  const selectedRunDetectedBlocks = useMemo(() => getDetectedBlocksCount(selectedRun), [selectedRun]);
 
   if (loading) {
     return (
@@ -528,9 +649,10 @@ export function Vision() {
 
       <Dialog open={Boolean(selectedRunId)} onOpenChange={(open) => {
         if (!open) {
-          setSelectedRunId(null);
           setSelectedRun(null);
           setDetailsError(null);
+          setDetailsLoading(false);
+          updateSelectedRunQuery(null);
         }
       }}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
@@ -554,11 +676,83 @@ export function Vision() {
               <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
                 <div className="overflow-hidden rounded-2xl border bg-[#F8F6F2]">
                   {selectedRun.preview_url ? (
-                    <img
-                      src={selectedRun.preview_url}
-                      alt="Preview da captura vision selecionada"
-                      className="aspect-[4/3] h-full w-full object-cover"
-                    />
+                    <div className="space-y-4 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="outline" className="border-[#D9C89A] bg-[#FFF8EC] text-[#8F7742]">
+                            {selectedRunDetectedBlocks} bloco{selectedRunDetectedBlocks === 1 ? '' : 's'} detectado{selectedRunDetectedBlocks === 1 ? '' : 's'}
+                          </Badge>
+                          {selectedRunDetections.length ? (
+                            <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                              Overlay {showDetectionOverlay ? 'ativo' : 'oculto'}
+                            </Badge>
+                          ) : null}
+                        </div>
+
+                        {selectedRunDetections.length ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowDetectionOverlay((current) => !current)}
+                          >
+                            {showDetectionOverlay ? 'Ocultar overlay' : 'Mostrar overlay'}
+                          </Button>
+                        ) : null}
+                      </div>
+
+                      <div className="relative mx-auto w-full max-w-[760px] overflow-hidden rounded-2xl border border-[#E8E0D2] bg-black/5">
+                        <img
+                          src={selectedRun.preview_url}
+                          alt="Preview da captura vision selecionada"
+                          className="block h-auto w-full"
+                          onLoad={(event) => {
+                            const target = event.currentTarget;
+                            setSelectedImageSize({
+                              width: target.naturalWidth,
+                              height: target.naturalHeight,
+                            });
+                          }}
+                        />
+
+                        {showDetectionOverlay && selectedImageSize && selectedRunDetections.length ? (
+                          <div className="pointer-events-none absolute inset-0">
+                            {selectedRunDetections.map((detection, index) => {
+                              const [x1, y1, x2, y2] = detection.bbox;
+                              const left = Math.max(0, Math.min(100, (x1 / selectedImageSize.width) * 100));
+                              const top = Math.max(0, Math.min(100, (y1 / selectedImageSize.height) * 100));
+                              const width = Math.max(0, Math.min(100, ((x2 - x1) / selectedImageSize.width) * 100));
+                              const height = Math.max(0, Math.min(100, ((y2 - y1) / selectedImageSize.height) * 100));
+                              const confidenceLabel = formatConfidencePercent(detection.confidence);
+
+                              return (
+                                <div
+                                  key={`${detection.label}-${index}`}
+                                  className="absolute rounded-md border-2 border-[#A88F52] bg-[#A88F52]/10 shadow-[0_0_0_1px_rgba(255,255,255,0.2)]"
+                                  style={{
+                                    left: `${left}%`,
+                                    top: `${top}%`,
+                                    width: `${width}%`,
+                                    height: `${height}%`,
+                                  }}
+                                >
+                                  <div className="absolute left-0 top-0 rounded-br-md bg-[#A88F52] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.08em] text-white">
+                                    {detection.label}
+                                    {confidenceLabel ? ` • ${confidenceLabel}` : ''}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <p className="text-sm text-[#1A1A1A]/65">
+                        {selectedRunDetections.length
+                          ? 'Overlay das detecções do modelo sobre a captura original, para conferir posição e contagem com confiança visual.'
+                          : 'Esta execução não retornou blocos detectados para desenhar overlay.'}
+                      </p>
+                    </div>
                   ) : (
                     <div className="flex aspect-[4/3] items-center justify-center text-[#1A1A1A]/45">
                       <div className="flex flex-col items-center gap-2 text-center">
@@ -612,6 +806,9 @@ export function Vision() {
                   <div className="flex flex-wrap gap-2 pt-2">
                     <Badge variant="outline" className={selectedRun.dataset_eligible ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-slate-100 text-slate-700'}>
                       dataset_eligible: {selectedRun.dataset_eligible ? 'true' : 'false'}
+                    </Badge>
+                    <Badge variant="outline" className="border-[#D9C89A] bg-[#FFF8EC] text-[#8F7742]">
+                      blocos_detectados: {selectedRunDetectedBlocks}
                     </Badge>
                     <Badge variant="outline" className={getRemotePersistence(selectedRun).remotePersisted ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}>
                       remote_persisted: {getRemotePersistence(selectedRun).remotePersisted ? 'true' : 'false'}

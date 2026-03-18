@@ -4,6 +4,8 @@ import { logger } from "npm:hono/logger";
 import * as auth from "./auth.tsx";
 import * as db from "./db.tsx";
 import * as comprasKV from "./compras-kv.tsx";
+import { buildOperationalRecommendation, resolveOperationalLimits } from "./recommendation-engine.ts";
+import { buildProductionForecast } from "./production-forecast.ts";
 
 const app = new Hono();
 const isAdminUser = (user: any) => String(user?.tipo_usuario || '').toLowerCase() === 'admin';
@@ -134,6 +136,101 @@ function roundThreshold(value: number, step = 50) {
   return Math.round(value / step) * step;
 }
 
+function buildRealtimeSensorSnapshot(leitura: any) {
+  if (!leitura) return null;
+
+  return {
+    temperatura: parseNumber(leitura.temperatura),
+    umidade: parseNumber(leitura.umidade),
+    co2: parseNumber(leitura.co2_ppm ?? leitura.co2),
+    luminosidade_lux: parseNumber(leitura.luminosidade_lux),
+    timestamp: leitura.timestamp || leitura.created_at || null,
+    source: "leituras_sensores",
+  };
+}
+
+function isOperationalLote(lote: any) {
+  const fase = String(lote?.fase_operacional || lote?.fase_atual || '').trim().toLowerCase();
+  const status = String(lote?.status || '').trim().toLowerCase();
+  return fase !== 'encerramento' && status !== 'finalizado' && status !== 'encerrado';
+}
+
+async function resolveLeituraSensorForLote(loteId: string, lote?: any | null) {
+  if (lote?.sala) {
+    const leituraSala = await db.getLatestLeituraSensorBySala(lote.sala);
+    if (leituraSala) {
+      console.log('[sensores.ambiente] using sala reading', {
+        lote_id: loteId,
+        codigo_lote: lote?.codigo_lote || null,
+        sala: lote?.sala || null,
+        sala_id: db.resolveSalaId(lote?.sala) || leituraSala.sala_id || null,
+        leitura_lote_id: leituraSala.lote_id || null,
+        leitura_codigo_lote: leituraSala.lote?.codigo_lote || null,
+        timestamp: leituraSala.timestamp || leituraSala.created_at || null,
+      });
+      return leituraSala;
+    }
+  }
+
+  const leituraDireta = await db.getLatestLeituraSensorByLoteId(loteId);
+  if (leituraDireta) {
+    console.log('[sensores.fallback] using lote fallback', {
+      lote_id: loteId,
+      codigo_lote: lote?.codigo_lote || null,
+      sala: lote?.sala || null,
+      lote_leitura_id: leituraDireta.id || null,
+      timestamp: leituraDireta.timestamp || leituraDireta.created_at || null,
+    });
+  }
+
+  return leituraDireta;
+}
+
+async function resolveHistoricoSensoresForLote(
+  loteId: string,
+  lote: any | null,
+  since: string,
+  limit = 4000,
+) {
+  if (lote?.sala) {
+    const leiturasSala = await db.getLeiturasSensoresBySala(lote.sala, {
+      since,
+      limit,
+    });
+
+    if (leiturasSala.length > 0) {
+      const leituraMaisRecente = leiturasSala[0];
+      console.log('[sensores.ambiente] using sala history', {
+        lote_id: loteId,
+        codigo_lote: lote?.codigo_lote || null,
+        sala: lote?.sala || null,
+        sala_id: db.resolveSalaId(lote?.sala) || leituraMaisRecente?.sala_id || null,
+        leitura_lote_id: leituraMaisRecente?.lote_id || null,
+        leitura_codigo_lote: leituraMaisRecente?.lote?.codigo_lote || null,
+        total_leituras: leiturasSala.length,
+      });
+      return leiturasSala;
+    }
+  }
+
+  const leiturasDiretas = await db.getLeiturasSensores({
+    lote_id: loteId,
+    since,
+    limit,
+  });
+
+  if (leiturasDiretas.length > 0) {
+    console.log('[sensores.fallback] using lote history fallback', {
+      lote_id: loteId,
+      codigo_lote: lote?.codigo_lote || null,
+      sala: lote?.sala || null,
+      total_leituras: leiturasDiretas.length,
+    });
+  }
+
+  return leiturasDiretas;
+}
+
 function calculateRisk(
   atual: { temperatura: number; umidade: number; co2: number; luminosidade?: number | null },
   produto?: {
@@ -156,17 +253,16 @@ function calculateRisk(
   const recomendacoes = new Set<string>();
   let score = 0;
 
-  const tempMin = parseNumber(produto?.temperatura_ideal_min) ?? 20;
-  const tempMax = parseNumber(produto?.temperatura_ideal_max) ?? 26;
-  const umidMin = parseNumber(produto?.umidade_ideal_min) ?? 80;
-  const umidMax = parseNumber(produto?.umidade_ideal_max) ?? 90;
-  const co2IdealMax = parseNumber(produto?.perfil_cultivo?.co2_ideal_max);
-  const lumMin = parseNumber(produto?.perfil_cultivo?.luminosidade_min_lux);
-  const lumMax = parseNumber(produto?.perfil_cultivo?.luminosidade_max_lux);
-
-  const co2Atencao = co2IdealMax ?? 1200;
-  const co2Elevado = co2IdealMax ? roundThreshold(co2IdealMax * 1.2) : 1500;
-  const co2Critico = co2IdealMax ? roundThreshold(co2IdealMax * 1.5) : 2000;
+  const limites = resolveOperationalLimits(produto);
+  const tempMin = limites.temperatura_min;
+  const tempMax = limites.temperatura_max;
+  const umidMin = limites.umidade_min;
+  const umidMax = limites.umidade_max;
+  const co2Atencao = limites.co2_ideal_max;
+  const co2Elevado = limites.co2_elevado;
+  const co2Critico = limites.co2_critico;
+  const lumMin = limites.luminosidade_min_lux;
+  const lumMax = limites.luminosidade_max_lux;
 
   if (atual.temperatura < tempMin) {
     score += 25;
@@ -229,15 +325,7 @@ function calculateRisk(
     score: Math.min(100, score),
     alertas,
     limites: {
-      temperatura_min: tempMin,
-      temperatura_max: tempMax,
-      umidade_min: umidMin,
-      umidade_max: umidMax,
-      co2_ideal_max: co2Atencao,
-      co2_elevado: co2Elevado,
-      co2_critico: co2Critico,
-      luminosidade_min_lux: lumMin,
-      luminosidade_max_lux: lumMax,
+      ...limites,
     },
     recomendacoes: Array.from(recomendacoes),
     resumo_recomendacoes: produto?.perfil_cultivo?.recomendacoes_json?.resumo || null,
@@ -338,20 +426,52 @@ app.post("/make-server-5522cecf/sensores/ingest", async (c) => {
 
     let loteId = String(body.lote_id ?? body.loteId ?? c.req.query('lote_id') ?? '').trim();
     const codigoLote = String(body.codigo_lote ?? body.codigoLote ?? c.req.query('codigo_lote') ?? '').trim();
+    const requestedSalaId =
+      db.resolveSalaId(body.sala_id ?? body.salaId ?? body.sala ?? c.req.query('sala_id') ?? c.req.query('sala')) || null;
+    let loteLookup: Awaited<ReturnType<typeof db.getLoteByCodigo>> | null = null;
+    let loteById: Awaited<ReturnType<typeof db.getLoteById>> | null = null;
 
     if (!loteId && codigoLote) {
-      const lote = await db.getLoteByCodigo(codigoLote);
-      loteId = lote?.id || '';
+      loteLookup = await db.getLoteByCodigo(codigoLote);
+      loteId = loteLookup?.id || '';
     }
 
-    if (!loteId) {
-      return c.json({ error: 'lote_id (ou codigo_lote) é obrigatório para registrar leitura' }, 400);
+    if (loteId && !loteLookup) {
+      loteById = await db.getLoteById(loteId);
     }
+
+    const resolvedSalaId =
+      requestedSalaId ||
+      db.resolveSalaId(loteLookup?.sala) ||
+      db.resolveSalaId(loteById?.sala) ||
+      null;
 
     const timestamp = parseTimestamp(body.timestamp ?? body.ts ?? c.req.query('timestamp'));
 
+    console.log('[sensores.ingest] lote resolution', {
+      requested_lote_id: String(body.lote_id ?? body.loteId ?? c.req.query('lote_id') ?? '').trim() || null,
+      requested_codigo_lote: codigoLote || null,
+      requested_sala_id: requestedSalaId,
+      resolved_lote_id: loteId || null,
+      resolved_codigo_lote: loteLookup?.codigo_lote || codigoLote || null,
+      resolved_sala: loteLookup?.sala || null,
+      resolved_sala_id: resolvedSalaId,
+      metrics: {
+        temperatura,
+        umidade,
+        co2,
+        luminosidade_lux: luminosidade,
+      },
+      timestamp: timestamp || null,
+    });
+
+    if (!loteId && !resolvedSalaId) {
+      return c.json({ error: 'lote_id/codigo_lote ou sala_id/sala é obrigatório para registrar leitura' }, 400);
+    }
+
     const leitura = await db.createLeituraSensor({
-      lote_id: loteId,
+      lote_id: loteId || null,
+      sala_id: resolvedSalaId,
       temperatura,
       umidade,
       co2_ppm: co2,
@@ -362,7 +482,8 @@ app.post("/make-server-5522cecf/sensores/ingest", async (c) => {
     return c.json({
       success: true,
       leitura_id: leitura.id,
-      lote_id: loteId,
+      lote_id: loteId || null,
+      sala_id: resolvedSalaId,
       received: {
         temperatura,
         umidade,
@@ -387,89 +508,117 @@ app.get("/make-server-5522cecf/sensores/latest", async (c) => {
     const hours = clampHours(c.req.query('hours'), 24);
     const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-    const leituras = await db.getLeiturasSensores({
-      lote_id: loteId,
-      since,
-      limit: 4000,
-    });
+    const [leiturasRecentes, loteAlvo, lotesBase] = await Promise.all([
+      db.getLeiturasSensores({ since, limit: 4000 }),
+      loteId ? db.getLoteById(loteId) : Promise.resolve(null),
+      loteId ? Promise.resolve([]) : db.getLotes(),
+    ]);
 
-    const porLote = new Map<string, {
-      id: string;
-      codigo_lote: string;
-      sala: string;
-      fase_operacional?: string | null;
-      produto?: any;
-      historico: Array<{ timestamp: string; temperatura: number; umidade: number; co2: number; pm25?: number; pm10?: number }>;
-    }>();
+    if (loteId && !loteAlvo) {
+      return c.json({ error: 'Lote não encontrado' }, 404);
+    }
 
-    for (const leitura of leituras) {
-      const key = leitura.lote_id || 'sem-lote';
-      if (!porLote.has(key)) {
-        porLote.set(key, {
-          id: key,
-          codigo_lote: leitura.lote?.codigo_lote || 'Sem lote',
-          sala: leitura.lote?.sala || 'Sem sala',
-          fase_operacional: leitura.lote?.fase_operacional || null,
-          produto: leitura.lote?.produto || null,
-          historico: [],
-        });
-      }
+    const lotesBaseArray = Array.isArray(lotesBase) ? lotesBase : [];
+    const lotesOperacionais = lotesBaseArray.filter(isOperationalLote);
+    const lotesMonitorados = loteAlvo
+      ? [loteAlvo]
+      : (lotesOperacionais.length > 0 ? lotesOperacionais : lotesBaseArray);
 
-      porLote.get(key)!.historico.push({
+    const historicoPorSala = new Map<string, Array<{ timestamp: string; temperatura: number; umidade: number; co2: number; luminosidade_lux?: number }>>();
+    const historicoDiretoPorLote = new Map<string, Array<{ timestamp: string; temperatura: number; umidade: number; co2: number; luminosidade_lux?: number }>>();
+
+    for (const leitura of leiturasRecentes) {
+      const sample = {
         timestamp: leitura.timestamp || leitura.created_at || new Date().toISOString(),
         temperatura: parseNumber(leitura.temperatura) ?? 0,
         umidade: parseNumber(leitura.umidade) ?? 0,
         co2: parseNumber(leitura.co2_ppm) ?? 0,
         luminosidade_lux: parseNumber(leitura.luminosidade_lux) ?? undefined,
-      });
+      };
+
+      if (leitura.lote_id) {
+        if (!historicoDiretoPorLote.has(leitura.lote_id)) {
+          historicoDiretoPorLote.set(leitura.lote_id, []);
+        }
+        historicoDiretoPorLote.get(leitura.lote_id)!.push(sample);
+      }
+
+      const salaKey = db.resolveSalaId(leitura.sala_id ?? leitura.lote?.sala);
+      if (salaKey) {
+        if (!historicoPorSala.has(salaKey)) {
+          historicoPorSala.set(salaKey, []);
+        }
+        historicoPorSala.get(salaKey)!.push(sample);
+      }
     }
 
-    const loteIdsComLeitura = Array.from(porLote.keys()).filter((id) => id !== 'sem-lote');
+    const sensoresPorLote = lotesMonitorados
+      .map((item) => {
+        const salaKey = db.resolveSalaId(item.sala);
+        const historicoBase =
+          (salaKey ? historicoPorSala.get(salaKey) : undefined) ||
+          historicoDiretoPorLote.get(item.id) ||
+          [];
+
+        if (historicoBase.length === 0) {
+          return null;
+        }
+
+        const historico = [...historicoBase].sort(
+          (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+        );
+        const sensorAtual = historico[historico.length - 1] || {
+          timestamp: new Date().toISOString(),
+          temperatura: 0,
+          umidade: 0,
+          co2: 0,
+          luminosidade_lux: undefined,
+        };
+
+        const risco = calculateRisk(
+          {
+            temperatura: sensorAtual.temperatura,
+            umidade: sensorAtual.umidade,
+            co2: sensorAtual.co2,
+            luminosidade: sensorAtual.luminosidade_lux,
+          },
+          item.produto,
+        );
+
+        return {
+          id: item.id,
+          codigo_lote: item.codigo_lote,
+          sala: item.sala,
+          sala_id: salaKey,
+          fase_operacional: item.fase_operacional || item.fase_atual || null,
+          data_inoculacao: item.data_inoculacao || null,
+          data_prevista_fim_incubacao: item.data_prevista_fim_incubacao || null,
+          data_real_fim_incubacao: item.data_real_fim_incubacao || null,
+          ambiente_source: salaKey && historicoPorSala.has(salaKey) ? 'sala' : 'lote',
+          sensor_atual: {
+            temperatura: sensorAtual.temperatura,
+            umidade: sensorAtual.umidade,
+            co2: sensorAtual.co2,
+            luminosidade_lux: sensorAtual.luminosidade_lux,
+          },
+          historico,
+          score_risco: risco.score,
+          alertas: risco.alertas,
+          limites_operacionais: risco.limites,
+          recomendacoes_operacionais: risco.recomendacoes,
+          resumo_recomendacoes: risco.resumo_recomendacoes,
+          produto: item.produto || null,
+        };
+      })
+      .filter(Boolean);
+
+    const loteIdsComLeitura = sensoresPorLote.map((item) => item!.id);
     const blocosResumoPorLote = await db.getBlocosResumoByLoteIds(loteIdsComLeitura);
 
-    const sensores = Array.from(porLote.values()).map((item) => {
-      const historico = item.historico.sort(
-        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-      );
-      const sensorAtual = historico[historico.length - 1] || {
-        timestamp: new Date().toISOString(),
-        temperatura: 0,
-        umidade: 0,
-        co2: 0,
-        luminosidade_lux: undefined,
-      };
-
-      const risco = calculateRisk(
-        {
-          temperatura: sensorAtual.temperatura,
-          umidade: sensorAtual.umidade,
-          co2: sensorAtual.co2,
-          luminosidade: sensorAtual.luminosidade_lux,
-        },
-        item.produto,
-      );
-
-      return {
-        id: item.id,
-        codigo_lote: item.codigo_lote,
-        sala: item.sala,
-        fase_operacional: item.fase_operacional || null,
-        sensor_atual: {
-          temperatura: sensorAtual.temperatura,
-          umidade: sensorAtual.umidade,
-          co2: sensorAtual.co2,
-          luminosidade_lux: sensorAtual.luminosidade_lux,
-        },
-        historico,
-        score_risco: risco.score,
-        alertas: risco.alertas,
-        limites_operacionais: risco.limites,
-        recomendacoes_operacionais: risco.recomendacoes,
-        resumo_recomendacoes: risco.resumo_recomendacoes,
-        produto: item.produto || null,
-        blocos_resumo: blocosResumoPorLote.get(item.id) || { total: 0, frutificacao: 0, colhido: 0 },
-      };
-    });
+    const sensores = sensoresPorLote.map((item) => ({
+      ...item!,
+      blocos_resumo: blocosResumoPorLote.get(item!.id) || { total: 0, frutificacao: 0, colhido: 0 },
+    }));
 
     sensores.sort((a, b) => a.codigo_lote.localeCompare(b.codigo_lote));
 
@@ -503,12 +652,13 @@ app.get("/make-server-5522cecf/sensores/history", async (c) => {
       return c.json({ error: 'Informe lote_id ou codigo_lote' }, 400);
     }
 
+    const lote = await db.getLoteById(loteId);
+    if (!lote) {
+      return c.json({ error: 'Lote não encontrado' }, 404);
+    }
+
     const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-    const leituras = await db.getLeiturasSensores({
-      lote_id: loteId,
-      since,
-      limit: 4000,
-    });
+    const leituras = await resolveHistoricoSensoresForLote(loteId, lote, since, 4000);
 
     const historico = leituras
       .map((leitura) => ({
@@ -613,6 +763,72 @@ app.get("/make-server-5522cecf/me", async (c) => {
 });
 
 // ============================================
+// SALAS
+// ============================================
+
+app.get("/make-server-5522cecf/salas", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const ativaQuery = c.req.query('ativa');
+    const ativa = typeof ativaQuery === 'undefined'
+      ? undefined
+      : ['1', 'true', 'yes', 'on'].includes(String(ativaQuery).trim().toLowerCase());
+
+    const salas = await db.getSalas(
+      typeof ativa === 'boolean'
+        ? { ativa }
+        : undefined,
+    );
+
+    return c.json({ salas });
+  } catch (error) {
+    console.error('Erro ao buscar salas:', error);
+    return c.json({ error: error.message }, error.message === 'Não autorizado' ? 401 : 500);
+  }
+});
+
+app.post("/make-server-5522cecf/salas", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const user = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(user)) {
+      return c.json({ error: 'Apenas administradores podem cadastrar salas.' }, 403);
+    }
+
+    const body = await c.req.json();
+    const sala = await db.createSala(body);
+
+    return c.json({ sala }, 201);
+  } catch (error) {
+    console.error('Erro ao criar sala:', error);
+    return c.json({ error: error.message }, error.message === 'Não autorizado' ? 401 : 500);
+  }
+});
+
+app.put("/make-server-5522cecf/salas/:id", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    const user = await auth.requireAuth(accessToken ?? null);
+
+    if (!isAdminUser(user)) {
+      return c.json({ error: 'Apenas administradores podem editar salas.' }, 403);
+    }
+
+    const id = c.req.param('id');
+    const body = await c.req.json();
+    const sala = await db.updateSala(id, body);
+
+    return c.json({ sala });
+  } catch (error) {
+    console.error('Erro ao atualizar sala:', error);
+    return c.json({ error: error.message }, error.message === 'Não autorizado' ? 401 : 500);
+  }
+});
+
+// ============================================
 // LOTES
 // ============================================
 
@@ -686,6 +902,70 @@ app.get("/make-server-5522cecf/lotes/:id", async (c) => {
   }
 });
 
+app.get("/make-server-5522cecf/lotes/:id/recomendacoes-operacionais", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const id = c.req.param('id');
+    const lote = await db.getLoteById(id);
+
+    if (!lote) {
+      return c.json({ error: 'Lote não encontrado' }, 404);
+    }
+
+    const leitura = await resolveLeituraSensorForLote(id, lote);
+    const sensorAtual = buildRealtimeSensorSnapshot(leitura);
+
+    const recommendation = buildOperationalRecommendation({
+      lote,
+      sensorAtual,
+    });
+
+    return c.json(recommendation);
+  } catch (error) {
+    console.error('Erro ao gerar recomendações operacionais do lote:', error);
+    return c.json({ error: error.message }, error.message === 'Não autorizado' ? 401 : 500);
+  }
+});
+
+app.get("/make-server-5522cecf/lotes/:id/previsao-producao", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const id = c.req.param('id');
+    const lote = await db.getLoteById(id);
+
+    if (!lote) {
+      return c.json({ error: 'Lote não encontrado' }, 404);
+    }
+
+    const [leitura, blocos] = await Promise.all([
+      resolveLeituraSensorForLote(id, lote),
+      db.getLoteBlocos(id),
+    ]);
+
+    const sensorAtual = buildRealtimeSensorSnapshot(leitura);
+
+    const recommendation = buildOperationalRecommendation({
+      lote,
+      sensorAtual,
+    });
+
+    const previsao = buildProductionForecast({
+      lote,
+      blocos,
+      recommendation,
+    });
+
+    return c.json(previsao);
+  } catch (error) {
+    console.error('Erro ao gerar previsão de produção do lote:', error);
+    return c.json({ error: error.message }, error.message === 'Não autorizado' ? 401 : 500);
+  }
+});
+
 app.get("/make-server-5522cecf/lotes/:id/timelapse", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
@@ -703,6 +983,25 @@ app.get("/make-server-5522cecf/lotes/:id/timelapse", async (c) => {
     return c.json(timelapse);
   } catch (error) {
     console.error('Erro ao buscar time-lapse do lote:', error);
+    return c.json({ error: error.message }, error.message === 'Não autorizado' ? 401 : 500);
+  }
+});
+
+app.get("/make-server-5522cecf/lotes/:id/analise-visual", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const id = c.req.param('id');
+    const analiseVisual = await db.getVisionLatestBlockAnalysisByLoteId(id);
+
+    if (!analiseVisual) {
+      return c.json({ error: 'Lote não encontrado' }, 404);
+    }
+
+    return c.json(analiseVisual);
+  } catch (error) {
+    console.error('Erro ao buscar análise visual do lote:', error);
     return c.json({ error: error.message }, error.message === 'Não autorizado' ? 401 : 500);
   }
 });

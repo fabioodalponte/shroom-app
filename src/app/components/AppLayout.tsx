@@ -2,6 +2,7 @@ import { Outlet, useNavigate } from 'react-router';
 import { useEffect, useState } from 'react';
 import {
   Beaker,
+  Building2,
   Box,
   ClipboardList,
   DollarSign,
@@ -64,6 +65,7 @@ export function AppLayout() {
 
   if (usuario?.tipo_usuario === 'admin') {
     navItems.splice(10, 0, { to: '/catalogo-cogumelos', icon: FileText, label: 'Catálogo' });
+    navItems.splice(11, 0, { to: '/salas', icon: Building2, label: 'Salas' });
   }
 
   useEffect(() => {

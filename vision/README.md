@@ -185,10 +185,39 @@ python3 -m pip install -r vision/requirements.txt
 python3 -m vision.runner status
 python3 -m vision.runner capture-once
 python3 -m vision.runner pipeline-once
+python3 -m vision.runner pipeline-once --lote-id UUID_DO_LOTE
 python3 -m vision.runner scheduled-capture
+python3 -m vision.runner scheduled-capture --lote-id UUID_DO_LOTE
 python3 -m vision.runner quality-latest
 python3 -m vision.runner dataset-classify-latest
 python3 -m vision.runner detect-blocks-latest
+```
+
+## Vinculo explicito com lote
+
+O pipeline agora aceita `lote_id` explicito.
+
+Prioridade de resolucao:
+
+1. `--lote-id` passado no runner
+2. `capture.default_lote_id` no `vision_config.json`
+3. `scheduled-capture` tenta resolver dinamicamente o lote ativo pela camera/sala
+4. ausencia de lote explicito, mantendo o fallback atual por camera/sala/periodo
+
+Quando disponivel, o `lote_id` e salvo em:
+
+1. `capture_metadata`
+2. JSON local do resultado do pipeline
+3. registro remoto em `vision_pipeline_runs`
+
+Configuracao opcional:
+
+```json
+"capture": {
+  "camera_name": "camera-sala-1",
+  "camera_url": "https://cam.cogumelos.net/capture",
+  "default_lote_id": "UUID_DO_LOTE"
+}
 ```
 
 ## Variaveis de ambiente
@@ -254,6 +283,7 @@ Configuracao recomendada para a captura:
 
 ```json
 "capture": {
+  "camera_name": "camera-sala-1",
   "camera_url": "https://cam.cogumelos.net/capture",
   "request_timeout_seconds": 15,
   "request_retries": 3,
@@ -304,16 +334,31 @@ Exporte o token do controlador local no Raspberry:
 export VISION_RELAY_API_TOKEN="shroombros-token-123"
 ```
 
+Resolucao dinamica do lote ativo no `scheduled-capture`:
+
+1. usa `--lote-id` quando passado manualmente
+2. usa `capture.default_lote_id` quando configurado para piloto
+3. tenta resolver a camera por:
+   - `capture.camera_url` contra `cameras.url_stream`
+   - `capture.camera_name` contra `cameras.nome`
+   - fallback para camera ativa unica, quando houver apenas uma
+4. usa a `localizacao` da camera como sala alvo
+5. busca lotes ativos da mesma sala
+6. escolhe o lote mais recente por `data_inoculacao`, com fallback para `data_inicio` e `created_at`
+7. se nada for encontrado, executa o pipeline sem `lote_id`
+
 Comportamento atual:
 
-1. `scheduled-capture` liga a luz localmente via `POST http://<base_url>/relay`
-2. espera o tempo de warmup
-3. executa internamente o `pipeline-once`
-4. desliga a luz no `finally`, mesmo se o pipeline falhar
-5. se `light_on` falhar, a captura e abortada com retorno estruturado
-6. se `light_off` falhar, o erro e logado como critico e o retorno e anotado
-7. se `verify_state=true`, o modulo tenta confirmar o estado via `GET /status`
-8. se `verify_state_strict=false`, falhas de verificacao geram warning, mas nao invalidam o comando
+1. `scheduled-capture` resolve o lote ativo antes da captura
+2. liga a luz localmente via `POST http://<base_url>/relay`
+3. espera o tempo de warmup
+4. executa internamente o `pipeline-once`
+5. desliga a luz no `finally`, mesmo se o pipeline falhar
+6. se `light_on` falhar, a captura e abortada com retorno estruturado
+7. se `light_off` falhar, o erro e logado como critico e o retorno e anotado
+8. se `verify_state=true`, o modulo tenta confirmar o estado via `GET /status`
+9. se `verify_state_strict=false`, falhas de verificacao geram warning, mas nao invalidam o comando
+10. se nao houver lote ativo, o pipeline segue sem `lote_id` e registra o fallback nos logs
 
 Teste manual do rele local:
 
@@ -524,6 +569,7 @@ Em `config/vision_config.json`:
       "captured_at": "2026-03-11T18:07:15.097320+00:00",
       "source": "esp32-cam",
       "camera_url": "https://cam.cogumelos.net/capture",
+      "lote_id": "UUID_DO_LOTE",
       "size_bytes": 33351
     },
     "quality_check": {

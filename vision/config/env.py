@@ -13,8 +13,12 @@ class SupabaseEnvConfig:
     storage_bucket: str
 
     @property
+    def has_api_access(self) -> bool:
+        return bool(self.url and self.key)
+
+    @property
     def is_ready(self) -> bool:
-        return bool(self.url and self.key and self.storage_bucket)
+        return bool(self.has_api_access and self.storage_bucket)
 
 
 def load_supabase_env() -> SupabaseEnvConfig:

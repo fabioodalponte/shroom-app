@@ -46,6 +46,20 @@ function addDaysIso(baseIso: string, days: number) {
   return baseDate.toISOString();
 }
 
+function normalizeSalaLabel(value: unknown) {
+  const normalized = String(value ?? '').trim();
+  return normalized || null;
+}
+
+function resolveSalaCode(value: unknown) {
+  const normalized = String(value ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || null;
+}
+
 async function getProdutoPerfilCultivoByProdutoId(produtoId?: string | null) {
   if (!produtoId) return null;
 
@@ -70,6 +84,132 @@ function resolveIncubacaoDiasPrevistos(perfilCultivo?: any | null) {
 }
 
 /**
+ * SALAS
+ */
+export async function getSalas(filters?: { ativa?: boolean | null }) {
+  let query = supabase
+    .from('salas')
+    .select('*')
+    .order('nome');
+
+  if (typeof filters?.ativa === 'boolean') {
+    query = query.eq('ativa', filters.ativa);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getSalaById(id?: string | null) {
+  const normalizedId = resolveSalaId(id);
+  if (!normalizedId) return null;
+
+  const { data, error } = await supabase
+    .from('salas')
+    .select('*')
+    .eq('id', normalizedId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+async function findSalaByLegacyName(name?: string | null) {
+  const normalizedName = normalizeSalaLabel(name);
+  if (!normalizedName) return null;
+  return getSalaById(normalizedName);
+}
+
+async function resolveSalaAssignment(input: { sala_id?: unknown; sala?: unknown }) {
+  const explicitSalaId = resolveSalaId(input.sala_id);
+  if (explicitSalaId) {
+    const sala = await getSalaById(explicitSalaId);
+    if (sala) {
+      return { sala_id: sala.id, sala: sala.nome };
+    }
+  }
+
+  const legacySala = normalizeSalaLabel(input.sala);
+  if (!legacySala) {
+    return { sala_id: null, sala: null };
+  }
+
+  const sala = await findSalaByLegacyName(legacySala);
+  if (sala) {
+    return { sala_id: sala.id, sala: sala.nome };
+  }
+
+  return { sala_id: null, sala: legacySala };
+}
+
+export async function createSala(input: {
+  id?: string | null;
+  codigo?: string | null;
+  nome?: string | null;
+  tipo?: string | null;
+  ativa?: boolean | null;
+  descricao?: string | null;
+}) {
+  const nome = normalizeSalaLabel(input.nome);
+  if (!nome) {
+    throw new Error('nome é obrigatório para cadastrar sala');
+  }
+
+  const id = resolveSalaId(input.id ?? input.codigo ?? nome);
+  if (!id) {
+    throw new Error('Não foi possível gerar o identificador da sala');
+  }
+
+  const codigo = resolveSalaCode(input.codigo ?? nome);
+  if (!codigo) {
+    throw new Error('Não foi possível gerar o código da sala');
+  }
+
+  const { data, error } = await supabase
+    .from('salas')
+    .insert({
+      id,
+      codigo,
+      nome,
+      tipo: normalizeSalaLabel(input.tipo) || 'cultivo',
+      ativa: input.ativa ?? true,
+      descricao: normalizeSalaLabel(input.descricao) || null,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function updateSala(id: string, updates: {
+  codigo?: string | null;
+  nome?: string | null;
+  tipo?: string | null;
+  ativa?: boolean | null;
+  descricao?: string | null;
+}) {
+  const payload: Record<string, unknown> = {};
+
+  if ('codigo' in updates) payload.codigo = resolveSalaCode(updates.codigo) || null;
+  if ('nome' in updates) payload.nome = normalizeSalaLabel(updates.nome) || null;
+  if ('tipo' in updates) payload.tipo = normalizeSalaLabel(updates.tipo) || 'cultivo';
+  if ('descricao' in updates) payload.descricao = normalizeSalaLabel(updates.descricao) || null;
+  if ('ativa' in updates && typeof updates.ativa === 'boolean') payload.ativa = updates.ativa;
+
+  const { data, error } = await supabase
+    .from('salas')
+    .update(payload)
+    .eq('id', resolveSalaId(id) || id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+/**
  * LOTES
  */
 export async function getLotes(filters?: { status?: string; sala?: string; fase_operacional?: string }) {
@@ -86,6 +226,7 @@ export async function getLotes(filters?: { status?: string; sala?: string; fase_
           recomendacoes_json
         )
       ),
+      sala_ref:salas(id, codigo, nome, tipo, ativa),
       responsavel:usuarios(id, nome, email),
       blocos:lotes_blocos(id, status_bloco, fase_operacional)
     `)
@@ -121,6 +262,7 @@ export async function createLote(loteData: any) {
   const codigoLote = `LT-${year}-${String(nextNumber).padStart(3, '0')}`;
   
   const faseAtual = faseOrNull(loteData?.fase_operacional) || 'esterilizacao';
+  const salaResolvida = await resolveSalaAssignment(loteData || {});
 
   const { data, error } = await supabase
     .from('lotes')
@@ -131,9 +273,12 @@ export async function createLote(loteData: any) {
       fase_operacional: faseAtual,
       fase_atual: faseAtual,
       fase_atualizada_em: new Date().toISOString(),
+      sala_id: salaResolvida.sala_id,
+      sala: salaResolvida.sala,
     })
     .select(`
       *,
+      sala_ref:salas(id, codigo, nome, tipo, ativa),
       produto:produtos(*),
       responsavel:usuarios(id, nome, email)
     `)
@@ -164,11 +309,27 @@ export async function updateLote(id: string, updates: any) {
     payload.fase_atualizada_em = new Date().toISOString();
   }
 
+  if (Object.prototype.hasOwnProperty.call(payload, 'sala') || Object.prototype.hasOwnProperty.call(payload, 'sala_id')) {
+    const hasSalaValue = normalizeSalaLabel(payload.sala);
+    const hasSalaIdValue = resolveSalaId(payload.sala_id);
+    if (!hasSalaValue && !hasSalaIdValue) {
+      payload.sala = null;
+      payload.sala_id = null;
+    } else {
+      const salaResolvida = await resolveSalaAssignment(payload);
+      payload.sala = salaResolvida.sala;
+      payload.sala_id = salaResolvida.sala_id;
+    }
+  }
+
   const { data, error } = await supabase
     .from('lotes')
     .update(payload)
     .eq('id', id)
-    .select()
+    .select(`
+      *,
+      sala_ref:salas(id, codigo, nome, tipo, ativa)
+    `)
     .single();
 
   if (error) throw error;
@@ -188,7 +349,7 @@ export async function updateLote(id: string, updates: any) {
 export async function getLoteByCodigo(codigoLote: string) {
   const { data, error } = await supabase
     .from('lotes')
-    .select('id, codigo_lote, sala')
+    .select('id, codigo_lote, sala, sala_id')
     .eq('codigo_lote', codigoLote)
     .maybeSingle();
 
@@ -201,7 +362,11 @@ export async function getLoteById(loteId: string) {
     .from('lotes')
     .select(`
       *,
-      produto:produtos(*),
+      sala_ref:salas(id, codigo, nome, tipo, ativa),
+      produto:produtos(
+        *,
+        perfil_cultivo:produtos_perfis_cultivo(*)
+      ),
       responsavel:usuarios(id, nome, email)
     `)
     .eq('id', loteId)
@@ -729,7 +894,8 @@ export async function getBlocosResumoByLoteIds(loteIds: string[]) {
 }
 
 interface LeituraSensorInput {
-  lote_id: string;
+  lote_id?: string | null;
+  sala_id?: string | null;
   temperatura?: number | null;
   umidade?: number | null;
   co2_ppm?: number | null;
@@ -737,10 +903,37 @@ interface LeituraSensorInput {
   timestamp?: string | null;
 }
 
+export function resolveSalaId(value: unknown) {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || null;
+}
+
 export async function createLeituraSensor(input: LeituraSensorInput) {
-  const payload: Record<string, unknown> = {
-    lote_id: input.lote_id,
-  };
+  let resolvedSalaId = resolveSalaId(input.sala_id);
+
+  if (!resolvedSalaId && input.lote_id) {
+    const { data: lote, error: loteError } = await supabase
+      .from('lotes')
+      .select('id, sala')
+      .eq('id', input.lote_id)
+      .maybeSingle();
+
+    if (loteError) throw loteError;
+    resolvedSalaId = resolveSalaId(lote?.sala);
+  }
+
+  if (!resolvedSalaId && !input.lote_id) {
+    throw new Error('sala_id ou lote_id é obrigatório para registrar leitura ambiental');
+  }
+
+  const payload: Record<string, unknown> = {};
+
+  if (input.lote_id) payload.lote_id = input.lote_id;
+  if (resolvedSalaId) payload.sala_id = resolvedSalaId;
 
   if (typeof input.temperatura === 'number') payload.temperatura = input.temperatura;
   if (typeof input.umidade === 'number') payload.umidade = input.umidade;
@@ -780,7 +973,7 @@ export async function createLeituraSensor(input: LeituraSensorInput) {
   if (typeof input.temperatura === 'number') loteUpdates.temperatura_atual = input.temperatura;
   if (typeof input.umidade === 'number') loteUpdates.umidade_atual = input.umidade;
 
-  if (Object.keys(loteUpdates).length > 0) {
+  if (input.lote_id && Object.keys(loteUpdates).length > 0) {
     const { error: updateError } = await supabase
       .from('lotes')
       .update(loteUpdates)
@@ -796,6 +989,8 @@ export async function createLeituraSensor(input: LeituraSensorInput) {
 
 interface GetLeiturasSensoresFilters {
   lote_id?: string;
+  lote_ids?: string[];
+  sala_id?: string;
   since?: string;
   limit?: number;
 }
@@ -829,6 +1024,10 @@ export async function getLeiturasSensores(filters?: GetLeiturasSensoresFilters) 
 
   if (filters?.lote_id) {
     query = query.eq('lote_id', filters.lote_id);
+  } else if (filters?.lote_ids?.length) {
+    query = query.in('lote_id', filters.lote_ids);
+  } else if (filters?.sala_id) {
+    query = query.eq('sala_id', filters.sala_id);
   }
 
   if (filters?.since) {
@@ -838,6 +1037,75 @@ export async function getLeiturasSensores(filters?: GetLeiturasSensoresFilters) 
   const { data, error } = await query;
   if (error) throw error;
   return data || [];
+}
+
+export async function getLatestLeituraSensorByLoteId(loteId: string) {
+  const leituras = await getLeiturasSensores({ lote_id: loteId, limit: 1 });
+  return leituras[0] || null;
+}
+
+export async function getLeiturasSensoresBySalaId(
+  salaId: string,
+  filters?: Omit<GetLeiturasSensoresFilters, 'lote_id' | 'lote_ids' | 'sala_id'>,
+) {
+  const normalizedSalaId = resolveSalaId(salaId);
+  if (!normalizedSalaId) return [];
+
+  return getLeiturasSensores({
+    sala_id: normalizedSalaId,
+    since: filters?.since,
+    limit: filters?.limit,
+  });
+}
+
+export async function getLatestLeituraSensorBySalaId(salaId: string) {
+  const leituras = await getLeiturasSensoresBySalaId(salaId, { limit: 1 });
+  return leituras[0] || null;
+}
+
+async function getPreferredLoteIdsBySala(sala: string) {
+  const normalizedSala = String(sala || '').trim();
+  if (!normalizedSala) return [];
+
+  const { data, error } = await supabase
+    .from('lotes')
+    .select('id, status, fase_operacional, fase_atual')
+    .eq('sala', normalizedSala);
+
+  if (error) throw error;
+
+  const lotes = data || [];
+  const lotesAtivos = lotes.filter((lote) => {
+    const status = String(lote.status || '').trim().toLowerCase();
+    const fase = String(lote.fase_operacional || lote.fase_atual || '').trim().toLowerCase();
+    return status !== 'finalizado' && status !== 'encerrado' && fase !== 'encerramento';
+  });
+
+  return (lotesAtivos.length > 0 ? lotesAtivos : lotes).map((lote) => lote.id);
+}
+
+export async function getLeiturasSensoresBySala(
+  sala: string,
+  filters?: Omit<GetLeiturasSensoresFilters, 'lote_id' | 'lote_ids'>,
+) {
+  const leiturasPorSalaId = await getLeiturasSensoresBySalaId(sala, filters);
+  if (leiturasPorSalaId.length > 0) {
+    return leiturasPorSalaId;
+  }
+
+  const loteIds = await getPreferredLoteIdsBySala(sala);
+  if (loteIds.length === 0) return [];
+
+  return getLeiturasSensores({
+    lote_ids: loteIds,
+    since: filters?.since,
+    limit: filters?.limit,
+  });
+}
+
+export async function getLatestLeituraSensorBySala(sala: string) {
+  const leituras = await getLeiturasSensoresBySala(sala, { limit: 1 });
+  return leituras[0] || null;
 }
 
 /**
@@ -1506,7 +1774,10 @@ export async function createTransacao(transacaoData: any) {
 export async function getCameras() {
   const { data, error } = await supabase
     .from('cameras')
-    .select('*')
+    .select(`
+      *,
+      sala_ref:salas(id, codigo, nome, tipo, ativa)
+    `)
     .order('localizacao');
 
   if (error) throw error;
@@ -1519,7 +1790,22 @@ export async function getCameras() {
 export async function getControladoresSala() {
   const { data, error } = await supabase
     .from('controladores_sala')
-    .select('id, nome, localizacao, tipo, base_url, device_id, status, modo_padrao, relay_map, observacoes, created_at, updated_at')
+    .select(`
+      id,
+      nome,
+      sala_id,
+      localizacao,
+      tipo,
+      base_url,
+      device_id,
+      status,
+      modo_padrao,
+      relay_map,
+      observacoes,
+      created_at,
+      updated_at,
+      sala_ref:salas(id, codigo, nome, tipo, ativa)
+    `)
     .order('localizacao');
 
   if (error) throw error;
@@ -1636,6 +1922,200 @@ function doesRunMatchCameraUrl(runUrl?: string | null, candidateUrl?: string | n
   }
 }
 
+function getVisionRunTimestamp(run: any) {
+  return run?.captured_at || run?.executed_at || null;
+}
+
+function sampleVisionRunsAcrossTimeline(runs: any[], limit: number) {
+  if (runs.length <= limit) {
+    return runs;
+  }
+
+  if (limit <= 1) {
+    return runs.slice(0, 1);
+  }
+
+  const sampledRuns = new Map<string, any>();
+  const step = (runs.length - 1) / (limit - 1);
+
+  for (let index = 0; index < limit; index += 1) {
+    const targetIndex = Math.round(index * step);
+    const run = runs[Math.min(targetIndex, runs.length - 1)];
+    const key = String(run?.id || `${getVisionRunTimestamp(run) || 'run'}-${index}`);
+    sampledRuns.set(key, run);
+  }
+
+  return Array.from(sampledRuns.values()).sort((a, b) => {
+    const aDate = new Date(getVisionRunTimestamp(a) || 0).getTime();
+    const bDate = new Date(getVisionRunTimestamp(b) || 0).getTime();
+    return aDate - bDate;
+  });
+}
+
+function getVisionRunDetections(run: any) {
+  const candidates = [
+    run?.raw_result_json?.detections,
+    run?.summary_json?.detections,
+    run?.raw_result_json?.summary?.detections,
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate.filter(Boolean);
+    }
+  }
+
+  return [];
+}
+
+function getVisionDetectionConfidence(detection: any) {
+  const rawValue = detection?.confidence ?? detection?.score ?? detection?.conf ?? null;
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getVisionRunBlockCount(run: any, detections: any[] = []) {
+  const explicitCount = Number(
+    run?.summary_json?.blocos_detectados ??
+    run?.raw_result_json?.summary?.blocos_detectados ??
+    run?.raw_result_json?.blocos_detectados ??
+    NaN
+  );
+
+  if (Number.isFinite(explicitCount)) {
+    return Math.max(0, Math.round(explicitCount));
+  }
+
+  return detections.length;
+}
+
+function getVisionRunAverageConfidence(detections: any[]) {
+  const confidences = detections
+    .map((detection) => getVisionDetectionConfidence(detection))
+    .filter((value): value is number => value !== null);
+
+  if (!confidences.length) return null;
+  return confidences.reduce((sum, value) => sum + value, 0) / confidences.length;
+}
+
+function getVisionRunBlockCountSource(run: any) {
+  if (Number.isFinite(Number(run?.summary_json?.blocos_detectados))) {
+    return 'summary_json.blocos_detectados';
+  }
+
+  if (Number.isFinite(Number(run?.raw_result_json?.summary?.blocos_detectados))) {
+    return 'raw_result_json.summary.blocos_detectados';
+  }
+
+  if (Number.isFinite(Number(run?.raw_result_json?.blocos_detectados))) {
+    return 'raw_result_json.blocos_detectados';
+  }
+
+  return 'detections.length';
+}
+
+function getVisionRunDetectorError(run: any) {
+  return (
+    run?.raw_result_json?.block_detection?.error ||
+    run?.summary_json?.block_detection_error ||
+    null
+  );
+}
+
+function sortVisionRunsByTimestampDesc(runs: any[]) {
+  return [...runs].sort((a, b) => {
+    const aDate = new Date(getVisionRunTimestamp(a) || 0).getTime();
+    const bDate = new Date(getVisionRunTimestamp(b) || 0).getTime();
+    return bDate - aDate;
+  });
+}
+
+function dedupeVisionRunsById(runs: any[]) {
+  const seen = new Set<string>();
+  return runs.filter((run) => {
+    const id = String(run?.id || '');
+    if (!id || seen.has(id)) {
+      return false;
+    }
+    seen.add(id);
+    return true;
+  });
+}
+
+function pickLatestVisionRun(loteLinkedRuns: any[], fallbackRuns: any[]) {
+  const latestLoteLinkedRun = sortVisionRunsByTimestampDesc(loteLinkedRuns)[0] || null;
+  const latestFallbackRun = sortVisionRunsByTimestampDesc(fallbackRuns)[0] || null;
+
+  if (!latestLoteLinkedRun && !latestFallbackRun) {
+    return { run: null, reason: 'no_candidates' as const };
+  }
+
+  if (latestLoteLinkedRun && !latestFallbackRun) {
+    return { run: latestLoteLinkedRun, reason: 'latest_lote_linked_run' as const };
+  }
+
+  if (!latestLoteLinkedRun && latestFallbackRun) {
+    return { run: latestFallbackRun, reason: 'latest_camera_fallback_run' as const };
+  }
+
+  const loteLinkedTimestamp = new Date(getVisionRunTimestamp(latestLoteLinkedRun) || 0).getTime();
+  const fallbackTimestamp = new Date(getVisionRunTimestamp(latestFallbackRun) || 0).getTime();
+
+  if (fallbackTimestamp > loteLinkedTimestamp) {
+    return { run: latestFallbackRun, reason: 'camera_fallback_newer_than_lote_linked' as const };
+  }
+
+  return { run: latestLoteLinkedRun, reason: 'lote_linked_newer_or_equal' as const };
+}
+
+async function resolveExpectedBlockCountForLote(lote: any) {
+  if (!lote?.id) {
+    return { quantidadeEsperada: null, origem: null };
+  }
+
+  const blocos = await getLoteBlocos(lote.id);
+  if (blocos.length) {
+    return {
+      quantidadeEsperada: blocos.length,
+      origem: 'lotes_blocos',
+    };
+  }
+
+  const unidade = normalizeTimelapseText(lote?.unidade);
+  const quantidadeInicial = Number(lote?.quantidade_inicial);
+
+  if (Number.isFinite(quantidadeInicial) && quantidadeInicial > 0 && unidade.includes('bloco')) {
+    return {
+      quantidadeEsperada: Math.max(0, Math.round(quantidadeInicial)),
+      origem: 'quantidade_inicial',
+    };
+  }
+
+  return { quantidadeEsperada: null, origem: null };
+}
+
+function getBlockAnalysisStatus(blocosDetectados: number | null, quantidadeEsperada: number | null) {
+  if (blocosDetectados === null) {
+    return { status: 'sem_analise', status_label: 'Sem análise' };
+  }
+
+  if (quantidadeEsperada === null || quantidadeEsperada <= 0) {
+    return { status: 'sem_referencia', status_label: 'Sem referência' };
+  }
+
+  const diferencaRelativa = Math.abs(blocosDetectados - quantidadeEsperada) / quantidadeEsperada;
+
+  if (diferencaRelativa <= 0.1) {
+    return { status: 'ok', status_label: 'OK' };
+  }
+
+  if (diferencaRelativa <= 0.3) {
+    return { status: 'atencao', status_label: 'Atenção' };
+  }
+
+  return { status: 'critico', status_label: 'Crítico' };
+}
+
 interface VisionRunFilters {
   quality_status?: string;
   remote_status?: 'ok' | 'failed' | 'pending';
@@ -1712,12 +2192,20 @@ export async function getVisionPipelineRunById(id: string) {
   return attachVisionPreviewUrl(data);
 }
 
-export async function getVisionTimelapseRunsByLoteId(loteId: string, limit = 120) {
+async function resolveVisionRunsForLote(loteId: string, limitHint = 120) {
   const lote = await getLoteById(loteId);
   if (!lote) return null;
 
   const sala = normalizeTimelapseText(lote.sala);
   const codigo = normalizeTimelapseText(lote.codigo_lote);
+  const loteStartAt = lote.data_inoculacao || lote.data_inicio || null;
+  const loteStartTime = loteStartAt ? new Date(loteStartAt).getTime() : null;
+  const loteAgeDays = loteStartTime && Number.isFinite(loteStartTime)
+    ? Math.max(1, Math.ceil((Date.now() - loteStartTime) / (1000 * 60 * 60 * 24)))
+    : 30;
+  const periodStartTime = loteStartTime && Number.isFinite(loteStartTime)
+    ? loteStartTime - (24 * 60 * 60 * 1000)
+    : null;
   const cameras = await getCameras();
   const camerasAtivas = cameras.filter((camera) => normalizeTimelapseText(camera.status || 'ativa') !== 'inativa');
   const cameraBase = camerasAtivas.length ? camerasAtivas : cameras;
@@ -1735,31 +2223,33 @@ export async function getVisionTimelapseRunsByLoteId(loteId: string, limit = 120
     return matchSala || matchCodigo;
   });
 
-  const startAt = lote.data_inoculacao || lote.data_inicio || null;
-  const endAt = lote.data_previsao_colheita || null;
-  const fetchLimit = Math.max(Math.min(limit * 3, 360), 120);
+  const fetchLimit = Math.max(Math.min(Math.max(limitHint * 6, loteAgeDays * 48), 3000), 240);
 
   let query = supabase
     .from('vision_pipeline_runs')
     .select('*')
-    .order('captured_at', { ascending: true, nullsFirst: false })
-    .order('executed_at', { ascending: true })
+    .order('captured_at', { ascending: false, nullsFirst: false })
+    .order('executed_at', { ascending: false })
     .limit(fetchLimit);
-
-  if (startAt) {
-    query = query.gte('captured_at', startAt);
-  }
-
-  if (endAt) {
-    query = query.lte('captured_at', endAt);
-  }
 
   const { data, error } = await query;
   if (error) throw error;
 
-  const runs = data || [];
-  const loteLinkedRuns = runs.filter((run) => {
+  const runs = (data || []).sort((a, b) => {
+    const aDate = new Date(getVisionRunTimestamp(a) || 0).getTime();
+    const bDate = new Date(getVisionRunTimestamp(b) || 0).getTime();
+    return aDate - bDate;
+  });
+  const runsWithinLotePeriod = periodStartTime
+    ? runs.filter((run) => {
+        const timestamp = new Date(getVisionRunTimestamp(run) || 0).getTime();
+        return Number.isFinite(timestamp) && timestamp >= periodStartTime;
+      })
+    : runs;
+
+  const loteLinkedRuns = runsWithinLotePeriod.filter((run) => {
     const linkedLoteId =
+      run?.lote_id ||
       run?.raw_result_json?.capture_metadata?.lote_id ||
       run?.raw_result_json?.lote_id ||
       run?.summary_json?.lote_id ||
@@ -1785,7 +2275,7 @@ export async function getVisionTimelapseRunsByLoteId(loteId: string, limit = 120
       .filter(Boolean);
 
     if (matchedCameraUrls.length) {
-      selectedRuns = runs.filter((run) =>
+      selectedRuns = runsWithinLotePeriod.filter((run) =>
         matchedCameraUrls.some((candidateUrl) => doesRunMatchCameraUrl(run.camera_url, candidateUrl))
       );
       matchStrategy = selectedRuns.length
@@ -1798,7 +2288,33 @@ export async function getVisionTimelapseRunsByLoteId(loteId: string, limit = 120
     }
   }
 
-  const limitedRuns = selectedRuns.slice(-limit);
+  const matchedCameraUrls = matchedCameras
+    .map((camera) => String(camera.url_stream || '').trim())
+    .filter(Boolean);
+
+  const cameraMatchedRuns = matchedCameraUrls.length
+    ? runsWithinLotePeriod.filter((run) =>
+        matchedCameraUrls.some((candidateUrl) => doesRunMatchCameraUrl(run.camera_url, candidateUrl))
+      )
+    : [];
+
+  return {
+    lote,
+    match_strategy: matchStrategy,
+    matched_cameras: matchedCameras,
+    lote_linked_runs: loteLinkedRuns,
+    camera_fallback_runs: cameraMatchedRuns,
+    selected_runs: selectedRuns,
+  };
+}
+
+export async function getVisionTimelapseRunsByLoteId(loteId: string, limit = 120) {
+  const resolution = await resolveVisionRunsForLote(loteId, limit);
+  if (!resolution) return null;
+
+  const { lote, match_strategy: matchStrategy, matched_cameras: matchedCameras, selected_runs: selectedRuns } = resolution;
+  const totalFrameCount = selectedRuns.length;
+  const limitedRuns = sampleVisionRunsAcrossTimeline(selectedRuns, limit);
   const frames = await Promise.all(
     limitedRuns.map(async (run, index) => {
       const withPreview = await attachVisionPreviewUrl(run);
@@ -1841,13 +2357,113 @@ export async function getVisionTimelapseRunsByLoteId(loteId: string, limit = 120
       localizacao: camera.localizacao,
       url_stream: camera.url_stream || null,
     })),
-    frame_count: frames.length,
+    frame_count: totalFrameCount,
     frames,
     empty_reason: frames.length
       ? null
       : matchStrategy === 'empty'
         ? 'Nenhuma captura vision vinculada por lote_id ou por câmera/sala no período do lote.'
         : 'Nenhuma captura vision encontrada para este lote.',
+  };
+}
+
+export async function getVisionLatestBlockAnalysisByLoteId(loteId: string) {
+  const resolution = await resolveVisionRunsForLote(loteId, 12);
+  if (!resolution) return null;
+
+  const {
+    lote,
+    match_strategy: matchStrategy,
+    matched_cameras: matchedCameras,
+    selected_runs: selectedRuns,
+    lote_linked_runs: loteLinkedRuns,
+    camera_fallback_runs: cameraFallbackRuns,
+  } = resolution;
+  const expectedBlockCount = await resolveExpectedBlockCountForLote(lote);
+
+  const candidateRuns = dedupeVisionRunsById([...(loteLinkedRuns || []), ...(cameraFallbackRuns || [])]);
+  const { run: selectedRunRaw, reason: selectionReason } = pickLatestVisionRun(
+    loteLinkedRuns || [],
+    cameraFallbackRuns || [],
+  );
+  const selectedRun = selectedRunRaw ? await attachVisionPreviewUrl(selectedRunRaw) : null;
+
+  const detections = getVisionRunDetections(selectedRun);
+  const blocosDetectados = selectedRun ? getVisionRunBlockCount(selectedRun, detections) : null;
+  const blockCountSource = selectedRun ? getVisionRunBlockCountSource(selectedRun) : null;
+  const detectorError = selectedRun ? getVisionRunDetectorError(selectedRun) : null;
+  const confiancaMedia =
+    selectedRun?.summary_json?.confianca_media_blocos ??
+    selectedRun?.raw_result_json?.summary?.confianca_media_blocos ??
+    (selectedRun ? getVisionRunAverageConfidence(detections) : null);
+  const ultimoTimestampAnalise = selectedRun?.captured_at || selectedRun?.executed_at || null;
+  const diferencaBlocos =
+    blocosDetectados !== null && expectedBlockCount.quantidadeEsperada !== null
+      ? blocosDetectados - expectedBlockCount.quantidadeEsperada
+      : null;
+  const statusInfo = getBlockAnalysisStatus(blocosDetectados, expectedBlockCount.quantidadeEsperada);
+  const effectiveMatchStrategy =
+    selectionReason === 'latest_camera_fallback_run' || selectionReason === 'camera_fallback_newer_than_lote_linked'
+      ? matchedCameras.length === 1 && !(lote?.sala || lote?.codigo_lote)
+        ? 'single_camera_fallback'
+        : 'camera_period'
+      : matchStrategy;
+
+  console.log('[vision.analise_visual] selected run', {
+    lote_id: lote.id,
+    codigo_lote: lote.codigo_lote,
+    match_strategy: effectiveMatchStrategy,
+    selection_reason: selectionReason,
+    selected_run_id: selectedRun?.id || null,
+    selected_run_timestamp: ultimoTimestampAnalise,
+    candidate_runs_count: candidateRuns.length,
+    lote_linked_runs_count: loteLinkedRuns.length,
+    camera_fallback_runs_count: cameraFallbackRuns.length,
+    selected_run_blocos_detectados: blocosDetectados,
+    selected_run_block_count_source: blockCountSource,
+    selected_run_has_detections: detections.length > 0,
+    selected_run_detector_error: detectorError,
+    matched_cameras_count: matchedCameras.length,
+  });
+
+  return {
+    lote: {
+      id: lote.id,
+      codigo_lote: lote.codigo_lote,
+      sala: lote.sala || lote?.sala_ref?.nome || null,
+    },
+    analise_disponivel: Boolean(selectedRun),
+    run_id: selectedRun?.id || null,
+    match_strategy: effectiveMatchStrategy || null,
+    run_diagnostics: {
+      selected_run_id: selectedRun?.id || null,
+      selected_run_timestamp: ultimoTimestampAnalise,
+      selection_reason: selectionReason,
+      candidate_runs_count: candidateRuns.length,
+      lote_linked_runs_count: loteLinkedRuns.length,
+      camera_fallback_runs_count: cameraFallbackRuns.length,
+      block_count_source: blockCountSource,
+      detector_error: detectorError,
+      matched_cameras_count: matchedCameras.length,
+    },
+    blocos_detectados: blocosDetectados,
+    quantidade_esperada: expectedBlockCount.quantidadeEsperada,
+    quantidade_esperada_origem: expectedBlockCount.origem,
+    diferenca_blocos: diferencaBlocos,
+    confianca_media: confiancaMedia,
+    ultimo_timestamp_analise: ultimoTimestampAnalise,
+    status: statusInfo.status,
+    status_label: statusInfo.status_label,
+    imagem_preview_url: selectedRun?.preview_url || null,
+    detections: detections.map((detection) => ({
+      label: detection?.label || detection?.class_name || detection?.class || 'bloco',
+      confidence: getVisionDetectionConfidence(detection),
+      bbox: Array.isArray(detection?.bbox)
+        ? detection.bbox
+        : Array.isArray(detection?.box)
+          ? detection.box
+          : null,
+    })),
   };
 }
 

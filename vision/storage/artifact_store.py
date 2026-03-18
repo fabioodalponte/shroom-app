@@ -4,8 +4,18 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+
+@dataclass(frozen=True)
+class SnapshotCandidate:
+    """Represents one candidate snapshot and how its timestamp was resolved."""
+
+    path: Path
+    timestamp: datetime
+    criterion: str
 
 
 class ArtifactStore:
@@ -52,13 +62,67 @@ class ArtifactStore:
         result_path.write_text(json.dumps(result, indent=2, ensure_ascii=True), encoding="utf-8")
         return result_path
 
-    def find_latest_snapshot(self) -> Path | None:
-        snapshots = sorted(
-            self.artifacts_dir.rglob("snapshot_*.jpg"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
+    def _resolve_snapshot_timestamp(self, image_path: Path) -> SnapshotCandidate:
+        metadata_path = image_path.with_suffix(".json")
+        if metadata_path.exists():
+            try:
+                payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+                for key in ("captured_at", "timestamp", "created_at"):
+                    value = payload.get(key)
+                    if not value:
+                        continue
+                    normalized = str(value).replace("Z", "+00:00")
+                    try:
+                        return SnapshotCandidate(
+                            path=image_path,
+                            timestamp=datetime.fromisoformat(normalized).astimezone(timezone.utc),
+                            criterion=f"metadata.{key}",
+                        )
+                    except ValueError:
+                        continue
+            except Exception:
+                pass
+
+        stem = image_path.stem
+        if stem.startswith("snapshot_"):
+            raw = stem[len("snapshot_") :]
+            for pattern in ("%Y%m%dT%H%M%S%fZ", "%Y%m%dT%H%M%SZ"):
+                try:
+                    return SnapshotCandidate(
+                        path=image_path,
+                        timestamp=datetime.strptime(raw, pattern).replace(tzinfo=timezone.utc),
+                        criterion="filename_timestamp",
+                    )
+                except ValueError:
+                    continue
+
+        return SnapshotCandidate(
+            path=image_path,
+            timestamp=datetime.fromtimestamp(image_path.stat().st_mtime, tz=timezone.utc),
+            criterion="file_mtime",
         )
-        return snapshots[0] if snapshots else None
+
+    def list_snapshot_candidates(self) -> list[SnapshotCandidate]:
+        snapshots = [path for path in self.artifacts_dir.rglob("snapshot_*.jpg") if path.is_file()]
+        candidates = [self._resolve_snapshot_timestamp(path) for path in snapshots]
+        return sorted(candidates, key=lambda candidate: (candidate.timestamp, candidate.path.name), reverse=True)
+
+    def find_latest_snapshot_details(self) -> dict[str, Any] | None:
+        candidates = self.list_snapshot_candidates()
+        if not candidates:
+            return None
+
+        latest = candidates[0]
+        return {
+            "path": latest.path,
+            "timestamp": latest.timestamp,
+            "criterion": latest.criterion,
+            "candidate_count": len(candidates),
+        }
+
+    def find_latest_snapshot(self) -> Path | None:
+        details = self.find_latest_snapshot_details()
+        return details["path"] if details else None
 
     def enqueue_remote_retry(
         self,

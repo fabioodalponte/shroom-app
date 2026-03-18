@@ -13,6 +13,17 @@ from .metrics import calculate_quality_metrics
 from .preprocessing import ImageQualityError, load_image_bundle
 
 
+def calculate_average_detection_confidence(detections: list[dict[str, Any]]) -> float | None:
+    confidences = [
+        float(detection["confidence"])
+        for detection in detections
+        if detection.get("confidence") is not None
+    ]
+    if not confidences:
+        return None
+    return round(sum(confidences) / len(confidences), 4)
+
+
 class VisionInferencePipeline:
     """Stub pipeline that now includes quality checks before real AI exists."""
 
@@ -91,17 +102,22 @@ class VisionInferencePipeline:
         )
 
     def run(self, image_path: Path, capture_metadata: dict[str, Any]) -> dict[str, Any]:
+        lote_id = capture_metadata.get("lote_id")
         quality_check = self.analyze_image_quality(image_path)
         block_detection = self.detect_blocks(image_path)
+        average_detection_confidence = calculate_average_detection_confidence(block_detection["detections"])
         return {
             "executed_at": datetime.now(timezone.utc).isoformat(),
             "mode": self.mode,
             "image_path": str(image_path),
+            "lote_id": lote_id,
             "capture_metadata": capture_metadata,
             "quality_check": quality_check,
             "block_detection": block_detection,
             "summary": {
+                "lote_id": lote_id,
                 "blocos_detectados": block_detection["blocos_detectados"],
+                "confianca_media_blocos": average_detection_confidence,
                 "contaminacao_visual_detectada": False,
                 "colonizacao_estimada": None,
                 "quality_status": quality_check["status"],

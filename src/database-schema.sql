@@ -63,7 +63,21 @@ CREATE TABLE IF NOT EXISTS produtos (
 );
 
 -- ============================================
--- 4. TABELA DE LOTES
+-- 4. TABELA DE SALAS
+-- ============================================
+CREATE TABLE IF NOT EXISTS salas (
+  id VARCHAR(120) PRIMARY KEY,
+  codigo VARCHAR(120) UNIQUE NOT NULL,
+  nome VARCHAR(160) NOT NULL,
+  tipo VARCHAR(60) NOT NULL DEFAULT 'cultivo',
+  ativa BOOLEAN DEFAULT true,
+  descricao TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- ============================================
+-- 5. TABELA DE LOTES
 -- ============================================
 CREATE TABLE IF NOT EXISTS lotes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -74,6 +88,7 @@ CREATE TABLE IF NOT EXISTS lotes (
   quantidade_inicial INTEGER,
   unidade VARCHAR(20) DEFAULT 'kg',
   status VARCHAR(50) DEFAULT 'Em Cultivo' CHECK (status IN ('Em Cultivo', 'Pronto', 'Colhido', 'Finalizado')),
+  sala_id VARCHAR(120) REFERENCES salas(id) ON DELETE SET NULL,
   sala VARCHAR(50),
   prateleira VARCHAR(50),
   temperatura_atual DECIMAL(5,2),
@@ -86,7 +101,7 @@ CREATE TABLE IF NOT EXISTS lotes (
 );
 
 -- ============================================
--- 5. TABELA DE COLHEITAS
+-- 6. TABELA DE COLHEITAS
 -- ============================================
 CREATE TABLE IF NOT EXISTS colheitas (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -100,7 +115,7 @@ CREATE TABLE IF NOT EXISTS colheitas (
 );
 
 -- ============================================
--- 6. TABELA DE ESTOQUE
+-- 7. TABELA DE ESTOQUE
 -- ============================================
 CREATE TABLE IF NOT EXISTS estoque (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -117,7 +132,7 @@ CREATE TABLE IF NOT EXISTS estoque (
 );
 
 -- ============================================
--- 7. TABELA DE PEDIDOS
+-- 8. TABELA DE PEDIDOS
 -- ============================================
 CREATE TABLE IF NOT EXISTS pedidos (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -136,7 +151,7 @@ CREATE TABLE IF NOT EXISTS pedidos (
 );
 
 -- ============================================
--- 8. TABELA DE ITENS DO PEDIDO
+-- 9. TABELA DE ITENS DO PEDIDO
 -- ============================================
 CREATE TABLE IF NOT EXISTS itens_pedido (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -150,7 +165,7 @@ CREATE TABLE IF NOT EXISTS itens_pedido (
 );
 
 -- ============================================
--- 9. TABELA DE ENTREGAS/LOGÍSTICA
+-- 10. TABELA DE ENTREGAS/LOGÍSTICA
 -- ============================================
 CREATE TABLE IF NOT EXISTS entregas (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -172,11 +187,12 @@ CREATE TABLE IF NOT EXISTS entregas (
 );
 
 -- ============================================
--- 10. TABELA DE CÂMERAS DE SEGURANÇA
+-- 11. TABELA DE CÂMERAS DE SEGURANÇA
 -- ============================================
 CREATE TABLE IF NOT EXISTS cameras (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nome VARCHAR(100) NOT NULL,
+  sala_id VARCHAR(120) REFERENCES salas(id) ON DELETE SET NULL,
   localizacao VARCHAR(100) NOT NULL,
   tipo VARCHAR(50) CHECK (tipo IN ('Sala de Cultivo', 'Estoque', 'Entrada', 'Expedição')),
   url_stream TEXT,
@@ -188,11 +204,12 @@ CREATE TABLE IF NOT EXISTS cameras (
 );
 
 -- ============================================
--- 11. TABELA DE CONTROLADORES DE SALA
+-- 12. TABELA DE CONTROLADORES DE SALA
 -- ============================================
 CREATE TABLE IF NOT EXISTS controladores_sala (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   nome VARCHAR(120) NOT NULL,
+  sala_id VARCHAR(120) REFERENCES salas(id) ON DELETE SET NULL,
   localizacao VARCHAR(120) NOT NULL,
   tipo VARCHAR(50) NOT NULL DEFAULT 'Sala de Cultivo',
   base_url TEXT NOT NULL,
@@ -207,7 +224,7 @@ CREATE TABLE IF NOT EXISTS controladores_sala (
 );
 
 -- ============================================
--- 12. TABELA FINANCEIRO
+-- 13. TABELA FINANCEIRO
 -- ============================================
 CREATE TABLE IF NOT EXISTS financeiro (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -226,11 +243,12 @@ CREATE TABLE IF NOT EXISTS financeiro (
 );
 
 -- ============================================
--- 13. TABELA DE SENSORES IOT (Opcional)
+-- 14. TABELA DE SENSORES IOT (Opcional)
 -- ============================================
 CREATE TABLE IF NOT EXISTS leituras_sensores (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   lote_id UUID REFERENCES lotes(id) ON DELETE CASCADE,
+  sala_id VARCHAR(120) REFERENCES salas(id) ON DELETE SET NULL,
   temperatura DECIMAL(5,2),
   umidade DECIMAL(5,2),
   co2_ppm INTEGER,
@@ -243,14 +261,20 @@ CREATE TABLE IF NOT EXISTS leituras_sensores (
 -- ============================================
 CREATE INDEX IF NOT EXISTS idx_lotes_status ON lotes(status);
 CREATE INDEX IF NOT EXISTS idx_lotes_codigo ON lotes(codigo_lote);
+CREATE INDEX IF NOT EXISTS idx_salas_ativa ON salas(ativa);
+CREATE INDEX IF NOT EXISTS idx_lotes_sala_id ON lotes(sala_id);
 CREATE INDEX IF NOT EXISTS idx_pedidos_status ON pedidos(status);
 CREATE INDEX IF NOT EXISTS idx_pedidos_cliente ON pedidos(cliente_id);
 CREATE INDEX IF NOT EXISTS idx_colheitas_lote ON colheitas(lote_id);
+CREATE INDEX IF NOT EXISTS idx_leituras_sensores_sala_timestamp ON leituras_sensores(sala_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_leituras_sensores_lote_timestamp ON leituras_sensores(lote_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_estoque_produto ON estoque(produto_id);
+CREATE INDEX IF NOT EXISTS idx_cameras_sala_id ON cameras(sala_id);
 CREATE INDEX IF NOT EXISTS idx_entregas_motorista ON entregas(motorista_id);
 CREATE INDEX IF NOT EXISTS idx_financeiro_data ON financeiro(data_transacao);
 CREATE INDEX IF NOT EXISTS idx_controladores_sala_localizacao ON controladores_sala(localizacao);
 CREATE INDEX IF NOT EXISTS idx_controladores_sala_status ON controladores_sala(status);
+CREATE INDEX IF NOT EXISTS idx_controladores_sala_sala_id ON controladores_sala(sala_id);
 
 -- ============================================
 -- TRIGGERS PARA UPDATED_AT
@@ -270,6 +294,9 @@ CREATE TRIGGER update_clientes_updated_at BEFORE UPDATE ON clientes
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_produtos_updated_at BEFORE UPDATE ON produtos
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_salas_updated_at BEFORE UPDATE ON salas
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_lotes_updated_at BEFORE UPDATE ON lotes
@@ -292,6 +319,7 @@ CREATE TRIGGER update_controladores_sala_updated_at BEFORE UPDATE ON controlador
 ALTER TABLE usuarios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clientes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE produtos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE salas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lotes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE colheitas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE estoque ENABLE ROW LEVEL SECURITY;
@@ -310,6 +338,9 @@ CREATE POLICY "Usuários autenticados podem ver clientes" ON clientes
     FOR SELECT TO authenticated USING (true);
 
 CREATE POLICY "Usuários autenticados podem ver produtos" ON produtos
+    FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Usuários autenticados podem ver salas" ON salas
     FOR SELECT TO authenticated USING (true);
 
 CREATE POLICY "Usuários autenticados podem ver lotes" ON lotes

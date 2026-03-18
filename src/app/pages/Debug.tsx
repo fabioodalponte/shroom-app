@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Button } from '../../components/ui/button';
 import { fetchServer } from '../../utils/supabase/client';
 import { useAuth } from '../../contexts/AuthContext';
+import { format } from 'date-fns';
 
 export function Debug() {
   const { usuario } = useAuth();
@@ -45,7 +46,7 @@ export function Debug() {
 
       const loteData = {
         produto_id: produto.id,
-        data_inicio: new Date().toISOString().split('T')[0],
+        data_inicio: format(new Date(), 'yyyy-MM-dd'),
         sala: 'Sala Teste',
         temperatura_atual: 20,
         umidade_atual: 85

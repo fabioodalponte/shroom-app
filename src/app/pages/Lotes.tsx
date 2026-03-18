@@ -7,7 +7,7 @@ import { Card, CardContent } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { fetchServer } from '../../utils/supabase/client';
-import { format, differenceInDays } from 'date-fns';
+import { format, differenceInDays, isValid, parseISO } from 'date-fns';
 
 type FaseOperacional = 'esterilizacao' | 'inoculacao' | 'incubacao' | 'pronto_para_frutificacao' | 'frutificacao' | 'colheita' | 'encerramento';
 
@@ -128,7 +128,8 @@ export function Lotes() {
       atrasados: lotes.filter((lote) => {
         if (!['incubacao', 'pronto_para_frutificacao'].includes(String(lote.fase_operacional || ''))) return false;
         if (!lote.data_prevista_fim_incubacao || lote.data_real_fim_incubacao) return false;
-        return new Date(lote.data_prevista_fim_incubacao) < agora;
+        const fimPrevisto = parseDateValue(lote.data_prevista_fim_incubacao);
+        return fimPrevisto ? fimPrevisto < agora : false;
       }).length,
       totalBlocos: lotes.reduce((acc, lote) => acc + (lote.blocos?.length || 0), 0),
     };
@@ -141,6 +142,12 @@ export function Lotes() {
       </div>
     );
   }
+
+  const parseDateValue = (value?: string | null) => {
+    if (!value) return null;
+    const parsed = parseISO(value);
+    return isValid(parsed) ? parsed : null;
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -228,11 +235,13 @@ export function Lotes() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredLotes.map((lote) => {
-            const diasDesdeInicio = differenceInDays(new Date(), new Date(lote.data_inicio));
+            const dataInicio = parseDateValue(lote.data_inicio);
+            const dataInoculacao = parseDateValue(lote.data_inoculacao);
+            const diasDesdeInicio = dataInicio ? differenceInDays(new Date(), dataInicio) : 0;
             const totalBlocos = lote.blocos?.length || 0;
             const blocosFrutificacao = (lote.blocos || []).filter((bloco) => bloco.status_bloco === 'frutificacao').length;
-            const fimIncubacaoPrevisto = lote.data_prevista_fim_incubacao ? new Date(lote.data_prevista_fim_incubacao) : null;
-            const fimIncubacaoReal = lote.data_real_fim_incubacao ? new Date(lote.data_real_fim_incubacao) : null;
+            const fimIncubacaoPrevisto = parseDateValue(lote.data_prevista_fim_incubacao);
+            const fimIncubacaoReal = parseDateValue(lote.data_real_fim_incubacao);
             const incubacaoAtrasada = Boolean(
               fimIncubacaoPrevisto &&
               !fimIncubacaoReal &&
@@ -265,7 +274,7 @@ export function Lotes() {
                     <div className="space-y-3 mb-4">
                       <div className="flex justify-between text-sm">
                         <span className="text-gray-600">Início:</span>
-                        <span className="font-medium">{format(new Date(lote.data_inicio), 'dd/MM/yyyy')}</span>
+                        <span className="font-medium">{dataInicio ? format(dataInicio, 'dd/MM/yyyy') : 'N/D'}</span>
                       </div>
 
                       {lote.sala && (
@@ -293,7 +302,7 @@ export function Lotes() {
                       {lote.data_inoculacao && (
                         <div className="flex justify-between text-sm">
                           <span className="text-gray-600">Inoculação:</span>
-                          <span className="font-medium">{format(new Date(lote.data_inoculacao), 'dd/MM/yyyy')}</span>
+                          <span className="font-medium">{dataInoculacao ? format(dataInoculacao, 'dd/MM/yyyy') : 'N/D'}</span>
                         </div>
                       )}
 

@@ -201,6 +201,7 @@ class VisionRemotePersister:
         dataset_classification = pipeline_result.get("dataset_classification", {})
 
         return {
+            "lote_id": capture_metadata.get("lote_id"),
             "executed_at": pipeline_result.get("executed_at"),
             "captured_at": capture_metadata.get("captured_at"),
             "source": capture_metadata.get("source"),

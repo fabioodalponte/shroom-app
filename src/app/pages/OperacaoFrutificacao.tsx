@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { format } from 'date-fns';
+import { format, isValid, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Activity, Loader2, Plus, RefreshCcw, Sprout, Trash2 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
@@ -96,6 +96,12 @@ function formatFase(fase?: string | null) {
 function formatEvento(tipo?: string | null) {
   if (!tipo) return 'Evento';
   return EVENTO_LABEL[tipo] || tipo.replaceAll('_', ' ');
+}
+
+function parseDateValue(value?: string | null) {
+  if (!value) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
 }
 
 function createConsumoLinha(): ConsumoLinha {
@@ -499,16 +505,16 @@ export function OperacaoFrutificacao() {
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">Inoculação</span>
                   <span className="font-medium">
-                    {loteAtual?.data_inoculacao ? format(new Date(loteAtual.data_inoculacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                    {parseDateValue(loteAtual?.data_inoculacao) ? format(parseDateValue(loteAtual?.data_inoculacao)!, 'dd/MM/yyyy', { locale: ptBR }) : '-'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">Fim incubação previsto</span>
                   <span className="font-medium">
-                    {loteAtual?.data_prevista_fim_incubacao ? format(new Date(loteAtual.data_prevista_fim_incubacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                    {parseDateValue(loteAtual?.data_prevista_fim_incubacao) ? format(parseDateValue(loteAtual?.data_prevista_fim_incubacao)!, 'dd/MM/yyyy', { locale: ptBR }) : '-'}
                   </span>
                 </div>
-                {loteAtual?.data_prevista_fim_incubacao && !loteAtual?.data_real_fim_incubacao && new Date(loteAtual.data_prevista_fim_incubacao) < new Date() && (
+                {parseDateValue(loteAtual?.data_prevista_fim_incubacao) && !loteAtual?.data_real_fim_incubacao && parseDateValue(loteAtual?.data_prevista_fim_incubacao)! < new Date() && (
                   <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
                     Incubação acima da previsão. Revise colonização visual e avance somente se o lote estiver pronto para frutificação.
                   </div>
@@ -516,7 +522,7 @@ export function OperacaoFrutificacao() {
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">Fim incubação real</span>
                   <span className="font-medium">
-                    {loteAtual?.data_real_fim_incubacao ? format(new Date(loteAtual.data_real_fim_incubacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                    {parseDateValue(loteAtual?.data_real_fim_incubacao) ? format(parseDateValue(loteAtual?.data_real_fim_incubacao)!, 'dd/MM/yyyy', { locale: ptBR }) : '-'}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 pt-2">

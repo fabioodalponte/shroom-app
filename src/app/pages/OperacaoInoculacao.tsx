@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { format } from 'date-fns';
+import { format, isValid, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Activity, Beaker, Loader2, Plus, RefreshCcw, Trash2 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
@@ -105,6 +105,12 @@ function createConsumoLinha(): ConsumoLinha {
     quantidade: '',
     observacoes: '',
   };
+}
+
+function parseDateValue(value?: string | null) {
+  if (!value) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
 }
 
 export function OperacaoInoculacao() {
@@ -268,7 +274,7 @@ export function OperacaoInoculacao() {
       });
 
       toast.success(
-        `Inoculação registrada. ${result.blocos_criados || quantidade} blocos em incubação até ${result.data_prevista_fim_incubacao ? format(new Date(result.data_prevista_fim_incubacao), 'dd/MM/yyyy', { locale: ptBR }) : 'data não definida'}.`,
+        `Inoculação registrada. ${result.blocos_criados || quantidade} blocos em incubação até ${parseDateValue(result.data_prevista_fim_incubacao) ? format(parseDateValue(result.data_prevista_fim_incubacao)!, 'dd/MM/yyyy', { locale: ptBR }) : 'data não definida'}.`,
       );
 
       setObservacoes('');
@@ -500,13 +506,13 @@ export function OperacaoInoculacao() {
                     <div className="flex items-center justify-between">
                       <span className="text-gray-500">Inoculação</span>
                       <span className="font-medium">
-                        {loteAtual?.data_inoculacao ? format(new Date(loteAtual.data_inoculacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                        {parseDateValue(loteAtual?.data_inoculacao) ? format(parseDateValue(loteAtual?.data_inoculacao)!, 'dd/MM/yyyy', { locale: ptBR }) : '-'}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-gray-500">Fim incubação previsto</span>
                       <span className="font-medium">
-                        {loteAtual?.data_prevista_fim_incubacao ? format(new Date(loteAtual.data_prevista_fim_incubacao), 'dd/MM/yyyy', { locale: ptBR }) : '-'}
+                        {parseDateValue(loteAtual?.data_prevista_fim_incubacao) ? format(parseDateValue(loteAtual?.data_prevista_fim_incubacao)!, 'dd/MM/yyyy', { locale: ptBR }) : '-'}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
