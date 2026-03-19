@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { format } from 'date-fns';
+import { format, formatDistanceToNowStrict } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   AlertTriangle,
@@ -53,6 +53,7 @@ interface VisionDetection {
 }
 
 type RemoteStatus = 'ok' | 'failed' | 'pending';
+type VisionTone = 'ok' | 'warning' | 'critical' | 'neutral';
 
 const QUALITY_STATUS_LABELS: Record<string, string> = {
   valid: 'Valida',
@@ -190,6 +191,12 @@ function formatConfidencePercent(value?: number | null) {
   return `${Math.round(percent)}%`;
 }
 
+function getConfidencePercentValue(value?: number | null) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null;
+  const numericValue = Number(value);
+  return numericValue <= 1 ? numericValue * 100 : numericValue;
+}
+
 function buildVisionQuery(filters: { qualityStatus: string; remoteStatus: string; days: string; limit?: number }) {
   const params = new URLSearchParams();
 
@@ -271,6 +278,224 @@ function getAverageDetectionConfidence(detections: VisionDetection[]) {
   return formatConfidencePercent(avg);
 }
 
+function getAverageDetectionConfidenceValue(detections: VisionDetection[]) {
+  const values = detections
+    .map((item) => getConfidencePercentValue(item.confidence))
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function getRunAverageConfidenceValue(run: VisionRun | null | undefined, detections: VisionDetection[]) {
+  const explicitCandidates = [
+    run?.summary_json?.confianca_media_blocos,
+    run?.summary_json?.confianca_media,
+    run?.raw_result_json?.summary?.confianca_media_blocos,
+    run?.raw_result_json?.summary?.confianca_media,
+    run?.raw_result_json?.confianca_media_blocos,
+    run?.raw_result_json?.confianca_media,
+  ];
+
+  for (const candidate of explicitCandidates) {
+    const normalized = getConfidencePercentValue(Number(candidate));
+    if (normalized !== null) return normalized;
+  }
+
+  return getAverageDetectionConfidenceValue(detections);
+}
+
+function getRunExpectedBlocks(run?: VisionRun | null) {
+  const candidates = [
+    run?.summary_json?.quantidade_esperada,
+    run?.summary_json?.expected_blocks,
+    run?.summary_json?.expected_block_count,
+    run?.raw_result_json?.summary?.quantidade_esperada,
+    run?.raw_result_json?.summary?.expected_blocks,
+    run?.raw_result_json?.summary?.expected_block_count,
+    run?.raw_result_json?.quantidade_esperada,
+    run?.raw_result_json?.expected_blocks,
+  ];
+
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric)) {
+      return Math.max(0, Math.round(numeric));
+    }
+  }
+
+  return null;
+}
+
+function getRelativeDateTime(value?: string | null) {
+  if (!value) return 'Sem horário';
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+
+  return formatDistanceToNowStrict(parsed, { addSuffix: true, locale: ptBR });
+}
+
+function formatDetectionLabel(label?: string | null) {
+  const normalized = String(label || 'Bloco').trim();
+  if (!normalized) return 'Bloco';
+  if (normalized.toLowerCase() === 'bloco' || normalized.toLowerCase() === 'block') return 'Bloco';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function getDetectionTone(confidence?: number | null): VisionTone {
+  const percent = getConfidencePercentValue(confidence);
+  if (percent === null) return 'warning';
+  if (percent >= 85) return 'ok';
+  if (percent >= 70) return 'warning';
+  return 'critical';
+}
+
+function getDifferenceTone(difference: number | null, expected: number | null): VisionTone {
+  if (difference === null || expected === null) return 'neutral';
+  const ratio = expected > 0 ? Math.abs(difference) / expected : Math.abs(difference);
+  if (ratio >= 0.2) return 'critical';
+  if (ratio >= 0.08) return 'warning';
+  return 'ok';
+}
+
+function getDifferenceLabel(detected: number, expected: number | null) {
+  if (expected === null) {
+    return {
+      value: 'Sem referência',
+      meta: 'Lote sem base comparável nesta captura.',
+      tone: 'neutral' as VisionTone,
+    };
+  }
+
+  const difference = detected - expected;
+  if (difference === 0) {
+    return {
+      value: 'Dentro do esperado',
+      meta: `Esperado ${expected} bloco(s).`,
+      tone: 'ok' as VisionTone,
+    };
+  }
+
+  const direction = difference > 0 ? 'acima' : 'abaixo';
+  return {
+    value: `${Math.abs(difference)} ${direction}`,
+    meta: `Esperado ${expected} bloco(s).`,
+    tone: getDifferenceTone(difference, expected),
+  };
+}
+
+function getVisionOverallStatus({
+  qualityStatus,
+  confidence,
+  difference,
+  expected,
+}: {
+  qualityStatus?: string | null;
+  confidence: number | null;
+  difference: number | null;
+  expected: number | null;
+}) {
+  let severity = 0;
+
+  if (qualityStatus === 'invalid_image') severity = Math.max(severity, 2);
+  if (qualityStatus === 'too_blurry' || qualityStatus === 'low_resolution') severity = Math.max(severity, 1);
+  if (qualityStatus === 'too_dark' || qualityStatus === 'too_bright') severity = Math.max(severity, 1);
+
+  if (confidence !== null) {
+    if (confidence < 70) severity = Math.max(severity, 2);
+    else if (confidence < 85) severity = Math.max(severity, 1);
+  }
+
+  const differenceTone = getDifferenceTone(difference, expected);
+  if (differenceTone === 'critical') severity = Math.max(severity, 2);
+  if (differenceTone === 'warning') severity = Math.max(severity, 1);
+
+  if (severity === 2) {
+    return {
+      tone: 'critical' as VisionTone,
+      label: 'Crítico',
+      summary: 'Imagem ou contagem pedem revisão manual antes de usar a captura como referência.',
+    };
+  }
+
+  if (severity === 1) {
+    return {
+      tone: 'warning' as VisionTone,
+      label: 'Atenção',
+      summary: 'A captura é utilizável, mas há sinais visuais para validar antes da decisão operacional.',
+    };
+  }
+
+  return {
+    tone: 'ok' as VisionTone,
+    label: 'OK',
+    summary: 'Leitura estável, com confiança consistente e pronta para acompanhamento operacional.',
+  };
+}
+
+function getVisionRecommendations({
+  qualityStatus,
+  confidence,
+  difference,
+  expected,
+  detected,
+  remoteStatus,
+}: {
+  qualityStatus?: string | null;
+  confidence: number | null;
+  difference: number | null;
+  expected: number | null;
+  detected: number;
+  remoteStatus: RemoteStatus;
+}) {
+  const recommendations: Array<{ title: string; impact: string }> = [];
+
+  if (qualityStatus === 'too_dark' || qualityStatus === 'too_bright') {
+    recommendations.push({
+      title: 'Ajustar iluminação da captura',
+      impact: 'Melhora leitura do modelo e reduz ruído nas próximas análises.',
+    });
+  }
+
+  if (qualityStatus === 'too_blurry' || qualityStatus === 'low_resolution') {
+    recommendations.push({
+      title: 'Revisar foco e enquadramento da câmera',
+      impact: 'Aumenta nitidez das boxes e reduz falso positivo em nova rodada.',
+    });
+  }
+
+  if (difference !== null && expected !== null && Math.abs(difference) > 0) {
+    recommendations.push({
+      title: difference < 0 ? 'Revisar possível subcontagem' : 'Validar excesso de blocos detectados',
+      impact: `${Math.abs(difference)} bloco(s) ${difference < 0 ? 'abaixo' : 'acima'} do esperado para este lote.`,
+    });
+  }
+
+  if (confidence !== null && confidence < 80) {
+    recommendations.push({
+      title: 'Validar manualmente regiões com baixa confiança',
+      impact: 'Evita decisão operacional baseada em detecções frágeis.',
+    });
+  }
+
+  if (remoteStatus !== 'ok') {
+    recommendations.push({
+      title: 'Confirmar persistência da rodada',
+      impact: 'Garante histórico íntegro e rastreabilidade da captura selecionada.',
+    });
+  }
+
+  if (!recommendations.length) {
+    recommendations.push({
+      title: 'Manter captura como referência operacional',
+      impact: `${detected} bloco(s) com leitura estável e pronta para comparação futura.`,
+    });
+  }
+
+  return recommendations.slice(0, 2);
+}
+
 export function Vision() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(true);
@@ -285,7 +510,10 @@ export function Vision() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [showDetectionOverlay, setShowDetectionOverlay] = useState(true);
-  const [selectedImageSize, setSelectedImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [featuredImageSize, setFeaturedImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [detailImageSize, setDetailImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [featuredImageLoading, setFeaturedImageLoading] = useState(false);
+  const [detailImageLoading, setDetailImageLoading] = useState(false);
   const selectedRunId = searchParams.get('run');
 
   const loadVisionData = useCallback(async (withRefreshing = false) => {
@@ -385,7 +613,6 @@ export function Vision() {
   }, [selectedRunId]);
 
   useEffect(() => {
-    setSelectedImageSize(null);
     setShowDetectionOverlay(true);
   }, [selectedRunId]);
 
@@ -396,13 +623,75 @@ export function Vision() {
   const featuredRemoteStatus = useMemo(() => getRemoteStatus(featuredRun), [featuredRun]);
   const featuredDetections = useMemo(() => getVisionDetections(featuredRun), [featuredRun]);
   const featuredDetectedBlocks = useMemo(() => getDetectedBlocksCount(featuredRun), [featuredRun]);
-  const featuredConfidenceLabel = useMemo(() => getAverageDetectionConfidence(featuredDetections), [featuredDetections]);
+  const featuredConfidence = useMemo(() => getRunAverageConfidenceValue(featuredRun, featuredDetections), [featuredDetections, featuredRun]);
+  const featuredConfidenceLabel = useMemo(() => formatConfidencePercent(featuredConfidence), [featuredConfidence]);
   const featuredRunLabel = selectedRun ? 'Captura selecionada' : 'Última captura processada';
+  const featuredExpectedBlocks = useMemo(() => getRunExpectedBlocks(featuredRun), [featuredRun]);
+  const featuredDifference = featuredExpectedBlocks !== null ? featuredDetectedBlocks - featuredExpectedBlocks : null;
+  const featuredDifferenceInfo = useMemo(
+    () => getDifferenceLabel(featuredDetectedBlocks, featuredExpectedBlocks),
+    [featuredDetectedBlocks, featuredExpectedBlocks],
+  );
+  const featuredStatus = useMemo(
+    () => getVisionOverallStatus({
+      qualityStatus: featuredRun?.quality_status,
+      confidence: featuredConfidence,
+      difference: featuredDifference,
+      expected: featuredExpectedBlocks,
+    }),
+    [featuredConfidence, featuredDifference, featuredExpectedBlocks, featuredRun?.quality_status],
+  );
+  const featuredRecommendations = useMemo(
+    () => getVisionRecommendations({
+      qualityStatus: featuredRun?.quality_status,
+      confidence: featuredConfidence,
+      difference: featuredDifference,
+      expected: featuredExpectedBlocks,
+      detected: featuredDetectedBlocks,
+      remoteStatus: featuredRemoteStatus,
+    }),
+    [featuredConfidence, featuredDetectedBlocks, featuredDifference, featuredExpectedBlocks, featuredRemoteStatus, featuredRun?.quality_status],
+  );
+  const featuredAnalysisRelative = useMemo(
+    () => getRelativeDateTime(featuredRun?.captured_at || featuredRun?.executed_at),
+    [featuredRun?.captured_at, featuredRun?.executed_at],
+  );
+  const featuredAnalysisTimestamp = useMemo(
+    () => formatDateTime(featuredRun?.captured_at || featuredRun?.executed_at),
+    [featuredRun?.captured_at, featuredRun?.executed_at],
+  );
+
+  useEffect(() => {
+    setFeaturedImageSize(null);
+    setFeaturedImageLoading(Boolean(featuredRun?.preview_url));
+  }, [featuredRun?.id, featuredRun?.preview_url]);
+
+  useEffect(() => {
+    setDetailImageSize(null);
+    setDetailImageLoading(Boolean(selectedRun?.preview_url));
+  }, [selectedRun?.id, selectedRun?.preview_url]);
 
   if (loading) {
     return (
-      <div className="vision-page vision-page--state">
-        <Loader2 className="h-8 w-8 animate-spin text-[#546A4A]" />
+      <div className="vision-page">
+        <div className="vision-shell vision-shell--loading">
+          <div className="vision-main">
+            <section className="vision-skeleton vision-skeleton--hero" />
+            <section className="vision-summary-grid">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="vision-skeleton vision-skeleton--card" />
+              ))}
+            </section>
+            <section className="vision-skeleton vision-skeleton--analysis" />
+            <section className="vision-capture-layout">
+              <div className="vision-skeleton vision-skeleton--image" />
+              <div className="vision-skeleton vision-skeleton--aside" />
+            </section>
+          </div>
+          <aside className="vision-aside">
+            <div className="vision-skeleton vision-skeleton--history" />
+          </aside>
+        </div>
       </div>
     );
   }
@@ -489,6 +778,26 @@ export function Vision() {
             </Select>
           </section>
 
+          {latestRun ? (
+            <section className={cn('vision-status-card', `vision-status-card--${featuredStatus.tone}`)}>
+              <div className="vision-status-card__main">
+                <div className="vision-status-card__eyebrow">
+                  <span className={cn('vision-status-card__dot', `vision-status-card__dot--${featuredStatus.tone}`)} />
+                  Status geral da análise
+                </div>
+                <div className="vision-status-card__headline">
+                  <strong>{featuredStatus.label}</strong>
+                  <span>{featuredStatus.summary}</span>
+                </div>
+              </div>
+              <div className="vision-status-card__meta">
+                <span>{getQualityLabel(featuredRun?.quality_status)}</span>
+                <span>{featuredConfidenceLabel || 'Sem confiança'}</span>
+                <span>{featuredExpectedBlocks !== null ? `Esperado ${featuredExpectedBlocks}` : 'Sem referência'}</span>
+              </div>
+            </section>
+          ) : null}
+
           {error ? (
             <section className="vision-inline-alert">
               <div className="vision-inline-alert__content">
@@ -518,18 +827,26 @@ export function Vision() {
                 <article className="vision-summary-card">
                   <p className="vision-summary-card__label">Blocos detectados</p>
                   <p className="vision-summary-card__value">{featuredDetectedBlocks}</p>
+                  <p className="vision-summary-card__meta">
+                    {featuredExpectedBlocks !== null ? `Base esperada: ${featuredExpectedBlocks} bloco(s)` : 'Sem base comparável vinculada'}
+                  </p>
+                </article>
+                <article className={cn('vision-summary-card', `vision-summary-card--${featuredDifferenceInfo.tone}`)}>
+                  <p className="vision-summary-card__label">Diferença vs esperado</p>
+                  <p className="vision-summary-card__value">{featuredDifferenceInfo.value}</p>
+                  <p className="vision-summary-card__meta">{featuredDifferenceInfo.meta}</p>
+                </article>
+                <article className={cn('vision-summary-card', `vision-summary-card--${featuredStatus.tone}`)}>
+                  <p className="vision-summary-card__label">Status geral</p>
+                  <p className="vision-summary-card__value">{featuredStatus.label}</p>
+                  <p className="vision-summary-card__meta">
+                    {featuredConfidenceLabel ? `Confiança média ${featuredConfidenceLabel}` : 'Sem confiança média calculada'}
+                  </p>
                 </article>
                 <article className="vision-summary-card">
-                  <p className="vision-summary-card__label">Confiança média</p>
-                  <p className="vision-summary-card__value">{featuredConfidenceLabel || 'N/D'}</p>
-                </article>
-                <article className="vision-summary-card">
-                  <p className="vision-summary-card__label">Qualidade</p>
-                  <p className="vision-summary-card__value">{getVisionQualityHeadline(featuredRun?.quality_status)}</p>
-                </article>
-                <article className="vision-summary-card">
-                  <p className="vision-summary-card__label">Dataset</p>
-                  <p className="vision-summary-card__value vision-summary-card__value--tertiary">{featuredRun?.dataset_class || '-'}</p>
+                  <p className="vision-summary-card__label">Última análise</p>
+                  <p className="vision-summary-card__value vision-summary-card__value--tertiary">{featuredAnalysisRelative}</p>
+                  <p className="vision-summary-card__meta">{featuredAnalysisTimestamp}</p>
                 </article>
               </section>
 
@@ -620,40 +937,48 @@ export function Vision() {
                     </div>
 
                     <div className="vision-capture-frame">
+                      {featuredImageLoading ? <div className="vision-image-loader" /> : null}
                       {featuredRun?.preview_url ? (
                         <>
                           <img
+                            key={featuredRun.id}
                             src={featuredRun.preview_url}
                             alt="Preview da captura vision"
-                            className="vision-capture-image"
+                            className={cn('vision-capture-image', featuredImageLoading && 'is-loading')}
                             onLoad={(event) => {
                               const target = event.currentTarget;
-                              setSelectedImageSize({
+                              setFeaturedImageSize({
                                 width: target.naturalWidth,
                                 height: target.naturalHeight,
                               });
+                              setFeaturedImageLoading(false);
+                            }}
+                            onError={() => {
+                              setFeaturedImageLoading(false);
                             }}
                           />
 
-                          {showDetectionOverlay && selectedImageSize && featuredDetections.length ? (
+                          {showDetectionOverlay && featuredImageSize && featuredDetections.length ? (
                             <div className="vision-overlay">
                               {featuredDetections.map((detection, index) => {
                                 const [x1, y1, x2, y2] = detection.bbox;
-                                const left = Math.max(0, Math.min(100, (x1 / selectedImageSize.width) * 100));
-                                const top = Math.max(0, Math.min(100, (y1 / selectedImageSize.height) * 100));
-                                const width = Math.max(0, Math.min(100, ((x2 - x1) / selectedImageSize.width) * 100));
-                                const height = Math.max(0, Math.min(100, ((y2 - y1) / selectedImageSize.height) * 100));
+                                const left = Math.max(0, Math.min(100, (x1 / featuredImageSize.width) * 100));
+                                const top = Math.max(0, Math.min(100, (y1 / featuredImageSize.height) * 100));
+                                const width = Math.max(0, Math.min(100, ((x2 - x1) / featuredImageSize.width) * 100));
+                                const height = Math.max(0, Math.min(100, ((y2 - y1) / featuredImageSize.height) * 100));
                                 const confidenceLabel = formatConfidencePercent(detection.confidence);
+                                const overlayTone = getDetectionTone(detection.confidence);
 
                                 return (
                                   <div
                                     key={`${detection.label}-${index}`}
-                                    className="vision-overlay__box"
+                                    className={cn('vision-overlay__box', `vision-overlay__box--${overlayTone}`)}
+                                    title={`${formatDetectionLabel(detection.label)}${confidenceLabel ? ` • ${confidenceLabel}` : ''}`}
                                     style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
                                   >
                                     <span className="vision-overlay__label">
-                                      {detection.label}
-                                      {confidenceLabel ? ` ${confidenceLabel}` : ''}
+                                      {formatDetectionLabel(detection.label)}
+                                      {confidenceLabel ? ` • ${confidenceLabel}` : ''}
                                     </span>
                                   </div>
                                 );
@@ -673,16 +998,32 @@ export function Vision() {
                 </div>
 
                 <aside className="vision-context-card">
-                  <h3 className="vision-context-card__title">Assistente Contextual</h3>
-                  <p className="vision-context-card__copy">
-                    {featuredDetections.length
-                      ? `A imagem ao lado confirma ${featuredDetectedBlocks} detecção(ões) válidas. O overlay permite revisar posicionamento, contagem e confiança do modelo antes da decisão operacional.`
-                      : 'A captura atual não trouxe detecções suficientes para overlay. Use o histórico lateral para revisar execuções anteriores.'}
-                  </p>
-                  <button type="button" className="vision-context-card__action" onClick={() => featuredRun && openRunDetails(featuredRun.id)}>
-                    <DatabaseZap className="h-4 w-4" />
-                    Abrir em tela cheia
-                  </button>
+                  <div className="vision-context-card__header">
+                    <div className="vision-context-card__icon">
+                      <Sparkles className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h3 className="vision-context-card__title">Assistente Contextual</h3>
+                      <p className="vision-context-card__subtitle">{getRunLotLabel(featuredRun)}</p>
+                    </div>
+                  </div>
+                  <div className="vision-context-card__list">
+                    {featuredRecommendations.map((recommendation) => (
+                      <div key={recommendation.title} className="vision-context-card__item">
+                        <p className="vision-context-card__item-title">{recommendation.title}</p>
+                        <p className="vision-context-card__item-impact">{recommendation.impact}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="vision-context-card__footer">
+                    <button type="button" className="vision-context-card__button">
+                      Aplicar ajuste
+                    </button>
+                    <button type="button" className="vision-context-card__action" onClick={() => featuredRun && openRunDetails(featuredRun.id)}>
+                      <DatabaseZap className="h-4 w-4" />
+                      Abrir em tela cheia
+                    </button>
+                  </div>
                 </aside>
               </section>
             </>
@@ -713,7 +1054,7 @@ export function Vision() {
                       className={cn('vision-history-item', selectedRunId === run.id && 'is-active')}
                       onClick={() => void openRunDetails(run.id)}
                     >
-                      <div className="vision-history-item__thumb">
+                    <div className="vision-history-item__thumb">
                         {run.preview_url ? (
                           <img src={run.preview_url} alt={`Captura ${run.id}`} className="vision-history-item__image" />
                         ) : (
@@ -802,33 +1143,39 @@ export function Vision() {
                       </div>
 
                       <div className="relative mx-auto w-full max-w-[760px] overflow-hidden rounded-2xl border border-[#E8E0D2] bg-black/5">
+                        {detailImageLoading ? <div className="vision-image-loader" /> : null}
                         <img
                           src={selectedRun.preview_url}
                           alt="Preview da captura vision selecionada"
-                          className="block h-auto w-full"
+                          className={cn('block h-auto w-full transition-opacity duration-300', detailImageLoading && 'opacity-0')}
                           onLoad={(event) => {
                             const target = event.currentTarget;
-                            setSelectedImageSize({
+                            setDetailImageSize({
                               width: target.naturalWidth,
                               height: target.naturalHeight,
                             });
+                            setDetailImageLoading(false);
+                          }}
+                          onError={() => {
+                            setDetailImageLoading(false);
                           }}
                         />
 
-                        {showDetectionOverlay && selectedImageSize && selectedRunDetections.length ? (
+                        {showDetectionOverlay && detailImageSize && selectedRunDetections.length ? (
                           <div className="pointer-events-none absolute inset-0">
                             {selectedRunDetections.map((detection, index) => {
                               const [x1, y1, x2, y2] = detection.bbox;
-                              const left = Math.max(0, Math.min(100, (x1 / selectedImageSize.width) * 100));
-                              const top = Math.max(0, Math.min(100, (y1 / selectedImageSize.height) * 100));
-                              const width = Math.max(0, Math.min(100, ((x2 - x1) / selectedImageSize.width) * 100));
-                              const height = Math.max(0, Math.min(100, ((y2 - y1) / selectedImageSize.height) * 100));
+                              const left = Math.max(0, Math.min(100, (x1 / detailImageSize.width) * 100));
+                              const top = Math.max(0, Math.min(100, (y1 / detailImageSize.height) * 100));
+                              const width = Math.max(0, Math.min(100, ((x2 - x1) / detailImageSize.width) * 100));
+                              const height = Math.max(0, Math.min(100, ((y2 - y1) / detailImageSize.height) * 100));
                               const confidenceLabel = formatConfidencePercent(detection.confidence);
+                              const overlayTone = getDetectionTone(detection.confidence);
 
                               return (
                                 <div
                                   key={`${detection.label}-${index}`}
-                                  className="absolute rounded-md border-2 border-[#A88F52] bg-[#A88F52]/10 shadow-[0_0_0_1px_rgba(255,255,255,0.2)]"
+                                  className={cn('vision-overlay__box', `vision-overlay__box--${overlayTone}`)}
                                   style={{
                                     left: `${left}%`,
                                     top: `${top}%`,
@@ -836,8 +1183,8 @@ export function Vision() {
                                     height: `${height}%`,
                                   }}
                                 >
-                                  <div className="absolute left-0 top-0 rounded-br-md bg-[#A88F52] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.08em] text-white">
-                                    {detection.label}
+                                  <div className="vision-overlay__label">
+                                    {formatDetectionLabel(detection.label)}
                                     {confidenceLabel ? ` • ${confidenceLabel}` : ''}
                                   </div>
                                 </div>

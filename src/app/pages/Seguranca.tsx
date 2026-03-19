@@ -24,10 +24,13 @@ import {
   Lightbulb,
   Flame,
   Power,
+  Plus,
+  Sparkles,
   X
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart } from 'recharts';
-import { format, isValid, parseISO } from 'date-fns';
+import { format, formatDistanceToNowStrict, isValid, parseISO } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
 import { fetchServer } from '../../utils/supabase/client';
 
 interface SensorData {
@@ -127,6 +130,64 @@ interface SalaControllerStatus {
   uptimeSeconds?: number;
   lastCommandMs?: number;
   relays?: Record<string, SalaControllerRelayState>;
+}
+
+type SensorMetricKey = 'temperatura' | 'umidade' | 'co2' | 'luminosidade_lux';
+type TrendDirection = 'up' | 'down' | 'stable';
+
+interface TrendInfo {
+  icon: typeof TrendingUp | typeof TrendingDown | typeof Minus;
+  color: string;
+  label: string;
+  direction: TrendDirection;
+}
+
+interface MetricIssue {
+  key: SensorMetricKey;
+  title: string;
+  severity: 'critical' | 'warning';
+  badgeClassName: string;
+  message: string;
+  actionLabel: string;
+  productionImpact: string;
+  activeSince: Date | null;
+}
+
+interface SalaOperacionalCard {
+  sala: string;
+  primaryLote: LoteMonitoramento;
+  lotes: LoteMonitoramento[];
+  status: 'critical' | 'warning' | 'ok';
+  statusLabel: string;
+  statusBadgeClassName: string;
+  priority: number;
+  avgTemperatura: number;
+  avgUmidade: number;
+  avgCo2: number;
+  impactedLots: number;
+  topIssue: MetricIssue | null;
+  topIssueLote: LoteMonitoramento | null;
+  alertElapsed: string | null;
+  trends: {
+    temperatura: TrendInfo;
+    umidade: TrendInfo;
+    co2: TrendInfo;
+  };
+  sensorBounds: {
+    tempMin: number;
+    tempMax: number;
+    umidMin: number;
+    umidMax: number;
+    co2IdealMax: number;
+    co2Elevado: number;
+    co2Critico: number;
+    lumMin: number | null;
+    lumMax: number | null;
+  };
+  sparkValues: number[];
+  sparkToneClassName: string;
+  productionImpact: string;
+  actionLabel: string;
 }
 
 const CAMERA_FRAME_SIZE_OPTIONS = ['QQVGA', 'QVGA', 'CIF', 'VGA', 'SVGA', 'XGA'] as const;
@@ -316,12 +377,231 @@ function getRelayIcon(relayName: string) {
   return Wind;
 }
 
+function getSortedHistory(historico: SensorData[]) {
+  return [...historico]
+    .filter((item) => item.timestamp)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
+function getSensorTrend(
+  historico: SensorData[],
+  key: SensorMetricKey,
+  tolerance: number,
+): TrendInfo {
+  const sorted = getSortedHistory(historico);
+  const recent = sorted
+    .map((item) => Number(item[key] ?? NaN))
+    .filter((value) => Number.isFinite(value))
+    .slice(-4);
+
+  if (recent.length < 2) {
+    return { icon: Minus, color: 'text-gray-500', label: 'Estável', direction: 'stable' };
+  }
+
+  const last = recent[recent.length - 1];
+  const previousAverage = recent.slice(0, -1).reduce((sum, value) => sum + value, 0) / (recent.length - 1);
+  const diff = last - previousAverage;
+
+  if (Math.abs(diff) <= tolerance) {
+    return { icon: Minus, color: 'text-green-600', label: 'Estável', direction: 'stable' };
+  }
+
+  if (diff > 0) {
+    return { icon: TrendingUp, color: 'text-rose-600', label: 'Subindo', direction: 'up' };
+  }
+
+  return { icon: TrendingDown, color: 'text-sky-600', label: 'Caindo', direction: 'down' };
+}
+
+function formatAlertElapsed(activeSince: Date | null) {
+  if (!activeSince) return null;
+  return formatDistanceToNowStrict(activeSince, { addSuffix: true, locale: ptBR });
+}
+
+function findActiveIssueStart(
+  historico: SensorData[],
+  predicate: (item: SensorData) => boolean,
+) {
+  const sorted = getSortedHistory(historico);
+  if (!sorted.length) return null;
+
+  for (let index = sorted.length - 1; index >= 0; index -= 1) {
+    if (!predicate(sorted[index])) {
+      const nextItem = sorted[index + 1];
+      if (!nextItem) return null;
+      const parsed = parseDateValue(nextItem.timestamp);
+      return parsed;
+    }
+  }
+
+  return parseDateValue(sorted[0].timestamp);
+}
+
+function getMetricIssues(
+  lote: LoteMonitoramento,
+  context: {
+    tempMin: number;
+    tempMax: number;
+    umidMin: number;
+    umidMax: number;
+    co2IdealMax: number;
+    co2Elevado: number;
+    co2Critico: number;
+    lumMin: number | null;
+    lumMax: number | null;
+  },
+) {
+  const issues: MetricIssue[] = [];
+  const impactedBlocks = lote.blocos_resumo?.frutificacao || lote.blocos_resumo?.total || 0;
+
+  if (lote.sensor_atual.temperatura > context.tempMax) {
+    issues.push({
+      key: 'temperatura',
+      title: 'Temperatura alta',
+      severity: lote.sensor_atual.temperatura >= context.tempMax + 2 ? 'critical' : 'warning',
+      badgeClassName: lote.sensor_atual.temperatura >= context.tempMax + 2 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800',
+      message: `Temperatura acima do ideal (${lote.sensor_atual.temperatura.toFixed(1)}°C).`,
+      actionLabel: 'Corrigir temperatura',
+      productionImpact: impactedBlocks
+        ? `${impactedBlocks} bloco(s) podem perder velocidade de desenvolvimento se o calor persistir.`
+        : 'Pode acelerar estresse térmico e reduzir uniformidade do lote.',
+      activeSince: findActiveIssueStart(lote.historico, (item) => item.temperatura > context.tempMax),
+    });
+  } else if (lote.sensor_atual.temperatura < context.tempMin) {
+    issues.push({
+      key: 'temperatura',
+      title: 'Temperatura baixa',
+      severity: 'warning',
+      badgeClassName: 'bg-amber-100 text-amber-800',
+      message: `Temperatura abaixo do ideal (${lote.sensor_atual.temperatura.toFixed(1)}°C).`,
+      actionLabel: 'Ajustar aquecimento',
+      productionImpact: 'Pode desacelerar colonização e alongar o ciclo produtivo.',
+      activeSince: findActiveIssueStart(lote.historico, (item) => item.temperatura < context.tempMin),
+    });
+  }
+
+  if (lote.sensor_atual.umidade < context.umidMin) {
+    issues.push({
+      key: 'umidade',
+      title: 'Umidade baixa',
+      severity: lote.sensor_atual.umidade <= context.umidMin - 8 ? 'critical' : 'warning',
+      badgeClassName: lote.sensor_atual.umidade <= context.umidMin - 8 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800',
+      message: `Umidade abaixo da faixa ideal (${lote.sensor_atual.umidade.toFixed(0)}%).`,
+      actionLabel: 'Aumentar umidificação',
+      productionImpact: 'Pode comprometer pinagem e reduzir enchimento dos frutos.',
+      activeSince: findActiveIssueStart(lote.historico, (item) => item.umidade < context.umidMin),
+    });
+  } else if (lote.sensor_atual.umidade > context.umidMax) {
+    issues.push({
+      key: 'umidade',
+      title: 'Umidade alta',
+      severity: lote.sensor_atual.umidade >= context.umidMax + 8 ? 'critical' : 'warning',
+      badgeClassName: lote.sensor_atual.umidade >= context.umidMax + 8 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800',
+      message: `Umidade acima da faixa ideal (${lote.sensor_atual.umidade.toFixed(0)}%).`,
+      actionLabel: 'Reduzir umidificação',
+      productionImpact: 'Eleva risco de contaminação superficial e condensação nos blocos.',
+      activeSince: findActiveIssueStart(lote.historico, (item) => item.umidade > context.umidMax),
+    });
+  }
+
+  if (lote.sensor_atual.co2 > context.co2Elevado) {
+    const isCritical = lote.sensor_atual.co2 >= context.co2Critico;
+    issues.push({
+      key: 'co2',
+      title: isCritical ? 'CO₂ crítico' : 'CO₂ elevado',
+      severity: isCritical ? 'critical' : 'warning',
+      badgeClassName: isCritical ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800',
+      message: `CO₂ acima do ideal (${lote.sensor_atual.co2.toFixed(0)} ppm).`,
+      actionLabel: 'Aumentar ventilação',
+      productionImpact: impactedBlocks
+        ? `Pode reduzir qualidade de ${impactedBlocks} bloco(s) em frutificação se mantido nas próximas horas.`
+        : 'Pode prejudicar morfologia e vigor dos frutos.',
+      activeSince: findActiveIssueStart(lote.historico, (item) => item.co2 > context.co2Elevado),
+    });
+  }
+
+  if (
+    typeof lote.sensor_atual.luminosidade_lux === 'number' &&
+    ((context.lumMin !== null && lote.sensor_atual.luminosidade_lux < context.lumMin) ||
+      (context.lumMax !== null && lote.sensor_atual.luminosidade_lux > context.lumMax))
+  ) {
+    const isAbove = context.lumMax !== null && lote.sensor_atual.luminosidade_lux > context.lumMax;
+    issues.push({
+      key: 'luminosidade_lux',
+      title: isAbove ? 'Luminosidade alta' : 'Luminosidade baixa',
+      severity: 'warning',
+      badgeClassName: 'bg-amber-100 text-amber-800',
+      message: `Luminosidade fora da faixa ideal (${lote.sensor_atual.luminosidade_lux.toFixed(0)} lux).`,
+      actionLabel: isAbove ? 'Reduzir iluminação' : 'Ajustar iluminação',
+      productionImpact: 'Pode desalinhar resposta fisiológica e deixar o lote menos uniforme.',
+      activeSince: findActiveIssueStart(
+        lote.historico,
+        (item) => {
+          const value = item.luminosidade_lux;
+          if (typeof value !== 'number') return false;
+          if (context.lumMin !== null && value < context.lumMin) return true;
+          if (context.lumMax !== null && value > context.lumMax) return true;
+          return false;
+        },
+      ),
+    });
+  }
+
+  return issues.sort((a, b) => {
+    const severityWeight = { critical: 2, warning: 1 };
+    return severityWeight[b.severity] - severityWeight[a.severity];
+  });
+}
+
+function getSalaStatus(score: number, issues: MetricIssue[]) {
+  if (issues.some((issue) => issue.severity === 'critical') || score >= 70) {
+    return {
+      status: 'critical' as const,
+      label: 'Crítico',
+      badgeClassName: 'bg-red-100 text-red-700 border-red-200',
+      priority: 3,
+    };
+  }
+
+  if (issues.length > 0 || score >= 30) {
+    return {
+      status: 'warning' as const,
+      label: 'Atenção',
+      badgeClassName: 'bg-amber-100 text-amber-800 border-amber-200',
+      priority: 2,
+    };
+  }
+
+  return {
+    status: 'ok' as const,
+    label: 'OK',
+    badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    priority: 1,
+  };
+}
+
+function buildSparkValues(historico: SensorData[], key: SensorMetricKey) {
+  const values = getSortedHistory(historico)
+    .map((item) => Number(item[key] ?? NaN))
+    .filter((value) => Number.isFinite(value))
+    .slice(-6);
+
+  if (!values.length) return Array.from({ length: 6 }, () => 40);
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = Math.max(max - min, 1);
+
+  return values.map((value) => 28 + ((value - min) / range) * 42);
+}
+
 export function Seguranca() {
   const [lotes, setLotes] = useState<LoteMonitoramento[]>([]);
   const [cameras, setCameras] = useState<CameraConfig[]>([]);
   const [controladoresSala, setControladoresSala] = useState<SalaControllerConfig[]>([]);
   const [loteSelecionado, setLoteSelecionado] = useState<string>('todos');
   const [periodoHistorico, setPeriodoHistorico] = useState<'24h' | '7d'>('24h');
+  const [statusVisualFilter, setStatusVisualFilter] = useState<'all' | 'critical' | 'normal'>('all');
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [cameraDialogOpen, setCameraDialogOpen] = useState(false);
@@ -915,6 +1195,160 @@ export function Seguranca() {
   const mediaCo2 = lotes.length > 0 ? lotes.reduce((acc, l) => acc + l.sensor_atual.co2, 0) / lotes.length : 0;
   const lotesAlerta = lotes.filter(l => l.score_risco >= 70).length;
   const lotesAtencao = lotes.filter(l => l.score_risco >= 30 && l.score_risco < 70).length;
+  const lotesPorSala = useMemo(() => {
+    const map = new Map<string, LoteMonitoramento[]>();
+
+    for (const lote of lotes) {
+      const sala = lote.sala || 'Sem sala';
+      const existing = map.get(sala) || [];
+      existing.push(lote);
+      map.set(sala, existing);
+    }
+
+    return map;
+  }, [lotes]);
+  const salasOperacionais = useMemo<SalaOperacionalCard[]>(() => {
+    const grouped = new Map<string, LoteMonitoramento[]>();
+
+    for (const lote of lotesFiltrados) {
+      const sala = lote.sala || 'Sem sala';
+      const existing = grouped.get(sala) || [];
+      existing.push(lote);
+      grouped.set(sala, existing);
+    }
+
+    return Array.from(grouped.entries())
+      .map(([sala, lotesSala]) => {
+        const orderedLotes = [...lotesSala].sort((a, b) => b.score_risco - a.score_risco);
+        const primaryLote = orderedLotes[0];
+        const primaryBounds = {
+          tempMin: primaryLote.limites_operacionais?.temperatura_min ?? 20,
+          tempMax: primaryLote.limites_operacionais?.temperatura_max ?? 25,
+          umidMin: primaryLote.limites_operacionais?.umidade_min ?? 80,
+          umidMax: primaryLote.limites_operacionais?.umidade_max ?? 90,
+          co2IdealMax: primaryLote.limites_operacionais?.co2_ideal_max ?? 1000,
+          co2Elevado: primaryLote.limites_operacionais?.co2_elevado ?? Math.max(primaryLote.limites_operacionais?.co2_ideal_max ?? 1000, 800),
+          co2Critico: primaryLote.limites_operacionais?.co2_critico ?? Math.max((primaryLote.limites_operacionais?.co2_elevado ?? 800) + 150, 1000),
+          lumMin: primaryLote.limites_operacionais?.luminosidade_min_lux ?? null,
+          lumMax: primaryLote.limites_operacionais?.luminosidade_max_lux ?? null,
+        };
+
+        const roomIssues = orderedLotes.flatMap((roomLote) =>
+          getMetricIssues(roomLote, {
+            tempMin: roomLote.limites_operacionais?.temperatura_min ?? 20,
+            tempMax: roomLote.limites_operacionais?.temperatura_max ?? 25,
+            umidMin: roomLote.limites_operacionais?.umidade_min ?? 80,
+            umidMax: roomLote.limites_operacionais?.umidade_max ?? 90,
+            co2IdealMax: roomLote.limites_operacionais?.co2_ideal_max ?? 1000,
+            co2Elevado: roomLote.limites_operacionais?.co2_elevado ?? Math.max(roomLote.limites_operacionais?.co2_ideal_max ?? 1000, 800),
+            co2Critico: roomLote.limites_operacionais?.co2_critico ?? Math.max((roomLote.limites_operacionais?.co2_elevado ?? 800) + 150, 1000),
+            lumMin: roomLote.limites_operacionais?.luminosidade_min_lux ?? null,
+            lumMax: roomLote.limites_operacionais?.luminosidade_max_lux ?? null,
+          }).map((issue) => ({ issue, lote: roomLote })),
+        );
+
+        const topIssueEntry = roomIssues.sort((a, b) => {
+          const severityWeight = { critical: 2, warning: 1 };
+          return severityWeight[b.issue.severity] - severityWeight[a.issue.severity] || b.lote.score_risco - a.lote.score_risco;
+        })[0] || null;
+
+        const status = getSalaStatus(primaryLote.score_risco, roomIssues.map((item) => item.issue));
+        const impactedLots = orderedLotes.filter((item) => item.score_risco >= 30 || item.alertas.length > 0).length;
+        const avgTemperatura = orderedLotes.reduce((sum, item) => sum + item.sensor_atual.temperatura, 0) / orderedLotes.length;
+        const avgUmidade = orderedLotes.reduce((sum, item) => sum + item.sensor_atual.umidade, 0) / orderedLotes.length;
+        const avgCo2 = orderedLotes.reduce((sum, item) => sum + item.sensor_atual.co2, 0) / orderedLotes.length;
+
+        return {
+          sala,
+          primaryLote,
+          lotes: orderedLotes,
+          status: status.status,
+          statusLabel: status.label,
+          statusBadgeClassName: status.badgeClassName,
+          priority: status.priority,
+          avgTemperatura,
+          avgUmidade,
+          avgCo2,
+          impactedLots,
+          topIssue: topIssueEntry?.issue || null,
+          topIssueLote: topIssueEntry?.lote || null,
+          alertElapsed: formatAlertElapsed(topIssueEntry?.issue.activeSince || null),
+          trends: {
+            temperatura: getSensorTrend(primaryLote.historico, 'temperatura', 0.6),
+            umidade: getSensorTrend(primaryLote.historico, 'umidade', 2.5),
+            co2: getSensorTrend(primaryLote.historico, 'co2', 45),
+          },
+          sensorBounds: primaryBounds,
+          sparkValues: buildSparkValues(
+            primaryLote.historico,
+            topIssueEntry?.issue.key === 'co2'
+              ? 'co2'
+              : topIssueEntry?.issue.key === 'umidade'
+                ? 'umidade'
+                : 'temperatura',
+          ),
+          sparkToneClassName:
+            status.status === 'critical'
+              ? 'bg-red-200'
+              : status.status === 'warning'
+                ? 'bg-amber-200'
+                : 'bg-emerald-200',
+          productionImpact: topIssueEntry?.issue
+            ? topIssueEntry.issue.productionImpact
+            : primaryLote.blocos_resumo?.frutificacao
+              ? `${primaryLote.blocos_resumo.frutificacao} bloco(s) em frutificação seguem sem desvio crítico nesta sala.`
+              : 'Sem impacto produtivo imediato identificado nesta sala.',
+          actionLabel: topIssueEntry?.issue.actionLabel || 'Controlar sala',
+        };
+      })
+      .sort((a, b) => b.priority - a.priority || b.primaryLote.score_risco - a.primaryLote.score_risco);
+  }, [lotesFiltrados]);
+  const resumoSalas = useMemo(() => ({
+    criticas: salasOperacionais.filter((item) => item.status === 'critical').length,
+    atencao: salasOperacionais.filter((item) => item.status === 'warning').length,
+    normais: salasOperacionais.filter((item) => item.status === 'ok').length,
+  }), [salasOperacionais]);
+  const visibleSalas = useMemo(() => {
+    if (statusVisualFilter === 'critical') {
+      return salasOperacionais.filter((item) => item.status === 'critical');
+    }
+
+    if (statusVisualFilter === 'normal') {
+      return salasOperacionais.filter((item) => item.status === 'ok');
+    }
+
+    return salasOperacionais;
+  }, [salasOperacionais, statusVisualFilter]);
+  const destaquesOperacionais = useMemo(() => {
+    return salasOperacionais
+      .filter((item) => item.topIssue)
+      .slice(0, 2)
+      .map((item) => ({
+        sala: item.sala,
+        prioridade: item.status === 'critical' ? 'Alta prioridade' : 'Média prioridade',
+        timing: item.alertElapsed || 'Agora',
+        title: item.actionLabel,
+        description: item.productionImpact,
+        action: item.status === 'critical' ? 'Executar ajuste automático' : 'Programar correção',
+      }));
+  }, [salasOperacionais]);
+  const projecaoOperacional = useMemo(() => {
+    const salaCritica = salasOperacionais.find((item) => item.status === 'critical') || null;
+    const blocosFrutificando = lotes.reduce((sum, item) => sum + (item.blocos_resumo?.frutificacao || 0), 0);
+    const blocosMonitorados = lotes.reduce((sum, item) => sum + (item.blocos_resumo?.total || 0), 0);
+    const eficienciaBase = blocosMonitorados > 0
+      ? ((blocosMonitorados - lotesAlerta) / Math.max(blocosMonitorados, 1)) * 100
+      : 100;
+
+    return {
+      headline: salaCritica
+        ? `A estabilidade da ${salaCritica.sala} é a principal variável de risco produtivo nas próximas horas.`
+        : 'O ambiente geral segue estável, com risco produtivo distribuído em níveis controlados.',
+      emphasis: salaCritica?.sala || null,
+      blocosFrutificando,
+      eficiencia: Math.max(0, Math.min(100, eficienciaBase)),
+    };
+  }, [lotes, lotesAlerta, salasOperacionais]);
 
   const controladorDialogBody = controladorSelecionado ? (
     <div className="mt-4 space-y-4">
@@ -1173,494 +1607,447 @@ export function Seguranca() {
   }
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
-      {/* Header */}
-      <div>
-        <h1 className="font-['Cormorant_Garamond'] text-[34px] font-bold leading-none sm:text-[42px]">
-          Segurança & Monitoramento
-        </h1>
-        <p className="text-[#1A1A1A] opacity-70 mt-1">
-          Painel operacional por sala com sensores IoT em tempo real, câmeras e análise de risco de contaminação
-        </p>
-      </div>
-
-      {/* Filtros */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-        <Select value={loteSelecionado} onValueChange={setLoteSelecionado}>
-          <SelectTrigger className="w-full sm:w-64">
-            <SelectValue placeholder="Selecione um lote" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos os Lotes</SelectItem>
-            {lotes.map(lote => (
-              <SelectItem key={lote.id} value={lote.id}>
-                {lote.codigo_lote} - {lote.sala} ({formatFaseLabel(lote.fase_operacional)})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={periodoHistorico} onValueChange={(v: '24h' | '7d') => setPeriodoHistorico(v)}>
-          <SelectTrigger className="w-full sm:w-48">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="24h">Últimas 24 horas</SelectItem>
-            <SelectItem value="7d">Últimos 7 dias</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <Button variant="outline" onClick={() => void carregarDados()} className="w-full sm:w-auto">
-          Atualizar
-        </Button>
-      </div>
-
+    <div className="security-page">
       {errorMessage && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="py-3 text-sm text-red-700">
-            {errorMessage}
-          </CardContent>
-        </Card>
+        <div className="security-inline-alert security-inline-alert--danger">
+          <AlertTriangle className="h-4 w-4" />
+          <div>
+            <strong>Falha ao atualizar monitoramento</strong>
+            <p>{errorMessage}</p>
+          </div>
+        </div>
       )}
 
       {lotes.length === 0 && !errorMessage && (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-gray-500">
-            Nenhuma leitura de sensor encontrada. Configure o webhook e envie as primeiras medições.
-          </CardContent>
-        </Card>
+        <div className="security-empty">
+          <strong>Nenhuma leitura de sensor encontrada</strong>
+          <p>Configure o webhook e envie as primeiras medições para montar o painel operacional.</p>
+        </div>
       )}
 
-      {/* Cards de Resumo - Métricas Gerais */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-600">Temperatura Média</p>
-                <p className="text-2xl font-bold text-[#546A4A] mt-1">
-                  {mediaTemp.toFixed(1)}°C
-                </p>
-              </div>
-              <Thermometer className="w-8 h-8 text-[#546A4A] opacity-20" />
-            </div>
-          </CardContent>
-        </Card>
+      <section className="security-summary">
+        <article className="security-summary-card security-summary-card--critical">
+          <span className="security-summary-card__label">Salas críticas</span>
+          <strong className="security-summary-card__value security-summary-card__value--critical">
+            {resumoSalas.criticas.toString().padStart(2, '0')}
+          </strong>
+        </article>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-600">Umidade Média</p>
-                <p className="text-2xl font-bold text-[#546A4A] mt-1">
-                  {mediaUmid.toFixed(0)}%
-                </p>
-              </div>
-              <Droplets className="w-8 h-8 text-[#546A4A] opacity-20" />
-            </div>
-          </CardContent>
-        </Card>
+        <article className="security-summary-card security-summary-card--warning">
+          <span className="security-summary-card__label">Lotes em atenção</span>
+          <strong className="security-summary-card__value security-summary-card__value--warning">
+            {(lotesAtencao + lotesAlerta).toString().padStart(2, '0')}
+          </strong>
+        </article>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-600">CO₂ Médio</p>
-                <p className="text-2xl font-bold text-[#546A4A] mt-1">
-                  {mediaCo2.toFixed(0)} ppm
-                </p>
-              </div>
-              <Wind className="w-8 h-8 text-[#546A4A] opacity-20" />
-            </div>
-          </CardContent>
-        </Card>
+        <article className="security-summary-card">
+          <span className="security-summary-card__label">Temp média</span>
+          <strong className="security-summary-card__value">
+            {mediaTemp.toFixed(1)} <span>°C</span>
+          </strong>
+        </article>
 
-        <Card className="border-yellow-500 border-2">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-yellow-700">Lotes em Atenção</p>
-                <p className="text-2xl font-bold text-yellow-600 mt-1">
-                  {lotesAtencao}
-                </p>
-              </div>
-              <AlertTriangle className="w-8 h-8 text-yellow-600 opacity-20" />
-            </div>
-          </CardContent>
-        </Card>
+        <article className="security-summary-card">
+          <span className="security-summary-card__label">Umidade média</span>
+          <strong className="security-summary-card__value">
+            {mediaUmid.toFixed(0)} <span>%</span>
+          </strong>
+        </article>
 
-        <Card className="border-red-500 border-2">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-red-700">Lotes em Perigo</p>
-                <p className="text-2xl font-bold text-red-600 mt-1">
-                  {lotesAlerta}
-                </p>
-              </div>
-              <Shield className="w-8 h-8 text-red-600 opacity-20" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+        <article className="security-summary-card">
+          <span className="security-summary-card__label">CO2 global</span>
+          <strong className="security-summary-card__value">
+            {mediaCo2.toFixed(0)} <span>ppm</span>
+          </strong>
+        </article>
+      </section>
 
-      {/* Resumo Operacional de Fases */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-600">Incubando</p>
-                <p className="text-2xl font-bold text-indigo-600 mt-1">
-                  {resumoOperacional.incubando}
-                </p>
-              </div>
-              <Activity className="w-8 h-8 text-indigo-600 opacity-20" />
-            </div>
-          </CardContent>
-        </Card>
+      <section className="security-toolbar-card">
+        <div className="security-toolbar-card__copy">
+          <span className="security-section-kicker">Monit. central</span>
+          <h2 className="security-section-title">Monitoramento de Salas</h2>
+          <p className="security-section-copy">
+            Status em tempo real dos laboratórios ativos, com prioridade visual para criticidade, lotes afetados e ação imediata.
+          </p>
+        </div>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-600">Prontos p/ Frutificação</p>
-                <p className="text-2xl font-bold text-sky-600 mt-1">
-                  {resumoOperacional.prontosParaFrutificacao}
-                </p>
-              </div>
-              <TrendingUp className="w-8 h-8 text-sky-600 opacity-20" />
-            </div>
-          </CardContent>
-        </Card>
+        <div className="security-toolbar">
+          <div className="security-toolbar__filters">
+            <Select value={loteSelecionado} onValueChange={setLoteSelecionado}>
+              <SelectTrigger className="security-toolbar__select">
+                <SelectValue placeholder="Todos os Lotes" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os Lotes</SelectItem>
+                {lotes.map((lote) => (
+                  <SelectItem key={lote.id} value={lote.id}>
+                    {lote.codigo_lote} - {lote.sala}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-600">Frutificando</p>
-                <p className="text-2xl font-bold text-emerald-600 mt-1">
-                  {resumoOperacional.frutificando}
-                </p>
-              </div>
-              <Radio className="w-8 h-8 text-emerald-600 opacity-20" />
-            </div>
-          </CardContent>
-        </Card>
+            <Select value={periodoHistorico} onValueChange={(v: '24h' | '7d') => setPeriodoHistorico(v)}>
+              <SelectTrigger className="security-toolbar__select security-toolbar__select--compact">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="24h">Últimas 24 horas</SelectItem>
+                <SelectItem value="7d">Últimos 7 dias</SelectItem>
+              </SelectContent>
+            </Select>
 
-        <Card className="border-rose-300">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-rose-700">Incubação Atrasada</p>
-                <p className="text-2xl font-bold text-rose-600 mt-1">
-                  {resumoOperacional.atrasados}
-                </p>
-              </div>
-              <AlertTriangle className="w-8 h-8 text-rose-600 opacity-20" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            <Button variant="outline" onClick={() => void carregarDados()} className="security-toolbar__refresh">
+              <RefreshCcw className="h-4 w-4" />
+              Atualizar
+            </Button>
+          </div>
 
-	      {/* Painel de Lotes com Score de Risco */}
-	      {lotesFiltrados.map(lote => {
-	        const risco = getRiscoColor(lote.score_risco);
-            const tempMin = lote.limites_operacionais?.temperatura_min ?? 20;
-            const tempMax = lote.limites_operacionais?.temperatura_max ?? 25;
-            const umidMin = lote.limites_operacionais?.umidade_min ?? 80;
-            const umidMax = lote.limites_operacionais?.umidade_max ?? 90;
-            const co2IdealMax = lote.limites_operacionais?.co2_ideal_max ?? 1000;
-            const lumMin = lote.limites_operacionais?.luminosidade_min_lux ?? null;
-            const lumMax = lote.limites_operacionais?.luminosidade_max_lux ?? null;
+          <div className="security-toolbar__tabs" role="tablist" aria-label="Filtrar salas por status">
+            <button
+              type="button"
+              className={`security-toolbar__tab ${statusVisualFilter === 'all' ? 'is-active' : ''}`}
+              onClick={() => setStatusVisualFilter('all')}
+            >
+              Todos
+            </button>
+            <button
+              type="button"
+              className={`security-toolbar__tab security-toolbar__tab--critical ${statusVisualFilter === 'critical' ? 'is-active' : ''}`}
+              onClick={() => setStatusVisualFilter('critical')}
+            >
+              Crítico
+            </button>
+            <button
+              type="button"
+              className={`security-toolbar__tab security-toolbar__tab--normal ${statusVisualFilter === 'normal' ? 'is-active' : ''}`}
+              onClick={() => setStatusVisualFilter('normal')}
+            >
+              Normal
+            </button>
+          </div>
+        </div>
+      </section>
 
-		        const tendTemp = getTendencia(lote.sensor_atual.temperatura, (tempMin + tempMax) / 2, Math.max((tempMax - tempMin) / 2, 1));
-		        const tendUmid = getTendencia(lote.sensor_atual.umidade, (umidMin + umidMax) / 2, Math.max((umidMax - umidMin) / 2, 3));
-		        const tendCo2 = getTendencia(lote.sensor_atual.co2, co2IdealMax, Math.max(co2IdealMax * 0.2, 100));
-	          const cameraLote = getCameraForLote(lote);
-	          const controladorLote = getControladorForLote(lote);
-          const incubacaoAtrasada = Boolean(
-            lote.data_prevista_fim_incubacao &&
-            !lote.data_real_fim_incubacao &&
-            ['incubacao', 'pronto_para_frutificacao'].includes(String(lote.fase_operacional || '')) &&
-            parseDateValue(lote.data_prevista_fim_incubacao) &&
-            parseDateValue(lote.data_prevista_fim_incubacao)! < new Date(),
-          );
+      <section className="security-rooms-section">
+        <div className="security-room-grid">
+          {visibleSalas.length > 0 ? visibleSalas.map((sala) => {
+            const controller = getControladorForLote(sala.primaryLote);
+            const camera = getCameraForLote(sala.primaryLote);
+            const tempOut = sala.avgTemperatura > sala.sensorBounds.tempMax || sala.avgTemperatura < sala.sensorBounds.tempMin;
+            const humidityOut = sala.avgUmidade > sala.sensorBounds.umidMax || sala.avgUmidade < sala.sensorBounds.umidMin;
+            const co2Out = sala.avgCo2 > sala.sensorBounds.co2Elevado;
+            const co2Critical = sala.avgCo2 >= sala.sensorBounds.co2Critico;
+            const TempTrendIcon = sala.trends.temperatura.icon;
+            const HumTrendIcon = sala.trends.umidade.icon;
+            const Co2TrendIcon = sala.trends.co2.icon;
 
-	        return (
-	          <Card key={lote.id} className={`border-l-4 ${risco.border}`}>
-	            <CardHeader>
-	              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div className="min-w-0">
-                  <CardTitle className="flex flex-wrap items-center gap-2 sm:gap-3">
-                    <span className="text-xl font-['Cormorant_Garamond'] sm:text-2xl">{lote.codigo_lote}</span>
-                    <Badge variant="outline">{lote.sala}</Badge>
-                    <Badge variant="outline">{formatFaseLabel(lote.fase_operacional)}</Badge>
-                    <Badge className={`${risco.bg} ${risco.text}`}>
-                      {risco.label} ({lote.score_risco}%)
-                    </Badge>
-                    {incubacaoAtrasada && (
-                      <Badge className="bg-rose-100 text-rose-700">
-                        Incubação atrasada
-                      </Badge>
-                    )}
-                    <Badge variant="outline">
-                      Blocos: {lote.blocos_resumo?.total || 0}
-                    </Badge>
-                    <Badge variant="outline">
-                      Frutificação: {lote.blocos_resumo?.frutificacao || 0}
-                    </Badge>
-                  </CardTitle>
+            return (
+              <article key={sala.sala} className={`security-room-card security-room-card--${sala.status}`}>
+                <header className="security-room-card__header">
+                  <div className="security-room-card__header-main">
+                    <h3 className="security-room-card__name">{sala.sala}</h3>
+                    <div className="security-room-card__badges">
+                      <span className={`security-room-card__status security-room-card__status--${sala.status}`}>
+                        {sala.statusLabel}
+                      </span>
+                      <span className="security-room-card__lot-chip">
+                        {sala.impactedLots} lote(s) impactado(s)
+                      </span>
+                    </div>
+                  </div>
+
+                  <span className={`security-room-card__status-icon security-room-card__status-icon--${sala.status}`} aria-hidden="true">
+                    {sala.status === 'critical' ? <AlertTriangle className="h-4 w-4" /> : sala.status === 'warning' ? <Radio className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
+                  </span>
+                </header>
+
+                <div className={`security-room-card__alert security-room-card__alert--${sala.status}`}>
+                  <div className="security-room-card__alert-main">
+                    <span className="security-room-card__alert-label">
+                      {sala.topIssue ? 'Alerta principal' : 'Status da sala'}
+                    </span>
+                    <strong className="security-room-card__alert-title">
+                      {sala.topIssue
+                        ? `${sala.topIssue.title} ${sala.topIssue.key === 'co2' ? `(${sala.avgCo2.toFixed(0)}ppm)` : sala.topIssue.key === 'umidade' ? `(${sala.avgUmidade.toFixed(0)}%)` : `(${sala.avgTemperatura.toFixed(1)}°C)`}`
+                        : 'Ambiente estável'}
+                    </strong>
+                  </div>
+                  <span className="security-room-card__alert-time">
+                    {sala.alertElapsed || 'Sem alerta ativo'}
+                  </span>
                 </div>
-	                <div className="flex flex-wrap gap-2">
+
+                <div className="security-room-card__metrics">
+                  <div className={`security-room-card__metric ${tempOut ? 'security-room-card__metric--critical' : ''}`}>
+                    <div className="security-room-card__metric-head">
+                      <span>Temperatura</span>
+                      <span className={`security-room-card__trend security-room-card__trend--${sala.trends.temperatura.direction}`}>
+                        <TempTrendIcon className="h-3.5 w-3.5" />
+                      </span>
+                    </div>
+                    <strong className="security-room-card__metric-value">{sala.avgTemperatura.toFixed(1)}°C</strong>
+                    <span className="security-room-card__metric-copy">
+                      Ideal {sala.sensorBounds.tempMin}-{sala.sensorBounds.tempMax}°C
+                    </span>
+                  </div>
+
+                  <div className={`security-room-card__metric ${humidityOut ? 'security-room-card__metric--warning' : ''}`}>
+                    <div className="security-room-card__metric-head">
+                      <span>Umidade</span>
+                      <span className={`security-room-card__trend security-room-card__trend--${sala.trends.umidade.direction}`}>
+                        <HumTrendIcon className="h-3.5 w-3.5" />
+                      </span>
+                    </div>
+                    <strong className="security-room-card__metric-value">{sala.avgUmidade.toFixed(0)}%</strong>
+                    <span className="security-room-card__metric-copy">
+                      Ideal {sala.sensorBounds.umidMin}-{sala.sensorBounds.umidMax}%
+                    </span>
+                  </div>
+
+                  <div className={`security-room-card__metric ${co2Out ? (co2Critical ? 'security-room-card__metric--critical' : 'security-room-card__metric--warning') : ''}`}>
+                    <div className="security-room-card__metric-head">
+                      <span>CO2</span>
+                      <span className={`security-room-card__trend security-room-card__trend--${sala.trends.co2.direction}`}>
+                        <Co2TrendIcon className="h-3.5 w-3.5" />
+                      </span>
+                    </div>
+                    <strong className="security-room-card__metric-value">{sala.avgCo2.toFixed(0)}ppm</strong>
+                    <span className="security-room-card__metric-copy">
+                      Ideal até {sala.sensorBounds.co2IdealMax}ppm
+                    </span>
+                  </div>
+                </div>
+
+                <div className="security-room-card__impact">
+                  <div className="security-room-card__impact-grid">
+                    <div className="security-room-card__impact-item">
+                      <span className="security-room-card__impact-label">Impacto em lotes</span>
+                      <strong className="security-room-card__impact-value">{sala.impactedLots} lote(s)</strong>
+                    </div>
+                    <div className="security-room-card__impact-item">
+                      <span className="security-room-card__impact-label">Lote em risco</span>
+                      <strong className="security-room-card__impact-value">{sala.topIssueLote?.codigo_lote || sala.primaryLote.codigo_lote}</strong>
+                    </div>
+                  </div>
+                  <p className="security-room-card__impact-copy">{sala.productionImpact}</p>
+                </div>
+
+                <div className={`security-room-card__spark security-room-card__spark--${sala.status}`}>
+                  {sala.sparkValues.map((value, index) => (
+                    <span
+                      key={`${sala.sala}-${index}`}
+                      className="security-room-card__spark-bar"
+                      style={{ height: `${Math.max(16, value)}px` }}
+                    />
+                  ))}
+                </div>
+
+                <div className="security-room-card__actions">
+                  <Button
+                    onClick={() => abrirControleDaSala(sala.primaryLote)}
+                    disabled={!controller}
+                    className={`security-room-card__primary-action security-room-card__primary-action--${sala.status}`}
+                  >
+                    <Settings2 className="h-4 w-4" />
+                    {controller ? sala.actionLabel : 'Sem controle'}
+                  </Button>
+
+                  <div className="security-room-card__secondary-actions">
                     <Button
                       variant="outline"
-                      size="sm"
-                      onClick={() => abrirControleDaSala(lote)}
-                      disabled={!controladorLote}
-                      className="flex-1 min-w-[150px] sm:flex-none"
+                      onClick={() => abrirCameraDoLote(sala.primaryLote)}
+                      disabled={!camera}
+                      className="security-room-card__secondary-action"
                     >
-                      <Settings2 className="w-4 h-4 mr-2" />
-                      {controladorLote ? 'Controle da Sala' : 'Sem Controle'}
+                      <Eye className="h-3.5 w-3.5" />
+                      Ver câmera
                     </Button>
                     <Button
                       variant="outline"
-                      size="sm"
-                      onClick={() => abrirConfiguracaoDoLote(lote)}
-                      disabled={!cameraLote}
-                      className="flex-1 min-w-[120px] sm:flex-none"
+                      onClick={() => abrirConfiguracaoDoLote(sala.primaryLote)}
+                      disabled={!camera}
+                      className="security-room-card__secondary-action"
                     >
-                      <SlidersHorizontal className="w-4 h-4 mr-2" />
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
                       Configurar
                     </Button>
-	                  <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => abrirCameraDoLote(lote)}
-                      disabled={!cameraLote}
-                      className="flex-1 min-w-[150px] sm:flex-none"
-                    >
-	                    <Eye className="w-4 h-4 mr-2" />
-	                    {cameraLote ? 'Câmera ao Vivo' : 'Sem Câmera'}
-	                  </Button>
-                  </div>
-	              </div>
-	            </CardHeader>
-
-            <CardContent className="space-y-6">
-              {/* Alertas (se houver) */}
-              {lote.alertas.length > 0 && (
-                <div className={`p-4 rounded-lg ${risco.bg} border ${risco.border}`}>
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className={`w-5 h-5 ${risco.text} flex-shrink-0 mt-0.5`} />
-                    <div className="flex-1">
-                      <h4 className={`font-semibold ${risco.text} mb-2`}>Alertas Ativos:</h4>
-                      <ul className={`space-y-1 text-sm ${risco.text}`}>
-                        {lote.alertas.map((alerta, idx) => (
-                          <li key={idx}>• {alerta}</li>
-                        ))}
-                      </ul>
-                    </div>
                   </div>
                 </div>
-              )}
+              </article>
+            );
+          }) : (
+            <div className="security-empty">
+              <strong>Nenhuma sala encontrada para esse filtro</strong>
+              <p>Altere o filtro de lote ou status para visualizar outras áreas monitoradas.</p>
+            </div>
+          )}
+        </div>
+      </section>
 
-              {incubacaoAtrasada && (
-                <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5 text-rose-600" />
-                    <div>
-                      <h4 className="font-semibold">Incubação acima do previsto</h4>
-                      <p className="mt-1">
-                        Previsão encerrada em {parseDateValue(lote.data_prevista_fim_incubacao) ? format(parseDateValue(lote.data_prevista_fim_incubacao)!, 'dd/MM/yyyy') : '--'}.
-                        Revise a colonização e avance para frutificação apenas se o lote estiver pronto.
-                      </p>
-                    </div>
-                  </div>
+      <section className="security-recommendations">
+        <div className="security-recommendations__header">
+          <div className="security-recommendations__title-row">
+            <span className="security-recommendations__icon">
+              <AlertTriangle className="h-4 w-4" />
+            </span>
+            <div>
+              <h3 className="security-recommendations__title">Recomendações Operacionais</h3>
+              <p className="security-recommendations__copy">Análise de IA baseada no estado atual das salas</p>
+            </div>
+          </div>
+          <span className="security-recommendations__fab">
+            <Plus className="h-4 w-4" />
+          </span>
+        </div>
+
+        <div className="security-recommendations__grid">
+          {(destaquesOperacionais.length
+            ? destaquesOperacionais
+            : recomendacoesOperacionais.itens.slice(0, 2).map((item, index) => ({
+                sala: index === 0 ? 'Operação geral' : 'Acompanhamento',
+                prioridade: index === 0 ? 'Alta prioridade' : 'Média prioridade',
+                timing: 'Agora',
+                title: item,
+                description: item,
+                action: 'Executar ação',
+              }))).map((item) => (
+            <article key={`${item.sala}-${item.title}`} className="security-recommendation-card">
+              <span className={`security-recommendation-card__accent ${item.prioridade.startsWith('Alta') ? 'security-recommendation-card__accent--critical' : ''}`}></span>
+              <div className="security-recommendation-card__body">
+                <div className="security-recommendation-card__meta">
+                  <span className={`security-recommendation-card__priority ${item.prioridade.startsWith('Alta') ? 'security-recommendation-card__priority--critical' : ''}`}>
+                    {item.prioridade}
+                  </span>
+                  <span className="security-recommendation-card__timing">• {item.timing}</span>
                 </div>
-              )}
-
-              {/* Sensores Atuais em Grid */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {/* Temperatura */}
-                <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-4 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <Thermometer className="w-5 h-5 text-orange-600" />
-                    <tendTemp.icon className={`w-4 h-4 ${tendTemp.color}`} />
-                  </div>
-                  <p className="text-xs text-gray-600">Temperatura</p>
-                  <p className="text-2xl font-bold text-orange-900 mt-1">
-                    {lote.sensor_atual.temperatura.toFixed(1)}°C
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">Ideal: {formatIdealRange(tempMin, tempMax, '°C') || '20-25°C'}</p>
-                </div>
-
-                {/* Umidade */}
-                <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <Droplets className="w-5 h-5 text-blue-600" />
-                    <tendUmid.icon className={`w-4 h-4 ${tendUmid.color}`} />
-                  </div>
-                  <p className="text-xs text-gray-600">Umidade</p>
-                  <p className="text-2xl font-bold text-blue-900 mt-1">
-                    {lote.sensor_atual.umidade.toFixed(0)}%
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">Ideal: {formatIdealRange(umidMin, umidMax, '%') || '80-90%'}</p>
-                </div>
-
-                {/* CO2 */}
-                <div className="bg-gradient-to-br from-purple-50 to-purple-100 p-4 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <Wind className="w-5 h-5 text-purple-600" />
-                    <tendCo2.icon className={`w-4 h-4 ${tendCo2.color}`} />
-                  </div>
-                  <p className="text-xs text-gray-600">CO₂</p>
-                  <p className="text-2xl font-bold text-purple-900 mt-1">
-                    {lote.sensor_atual.co2.toFixed(0)}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">ppm (Ideal: {'<'}{Math.round(co2IdealMax)})</p>
-                </div>
-
-                {typeof lote.sensor_atual.luminosidade_lux === 'number' && (lumMin !== null || lumMax !== null) && (
-                  <div className="bg-gradient-to-br from-amber-50 to-yellow-100 p-4 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <Lightbulb className="w-5 h-5 text-amber-600" />
-                    </div>
-                    <p className="text-xs text-gray-600">Luminosidade</p>
-                    <p className="text-2xl font-bold text-amber-900 mt-1">
-                      {lote.sensor_atual.luminosidade_lux.toFixed(0)}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      lux (Ideal: {formatIdealRange(lumMin, lumMax, '') || 'N/D'})
-                    </p>
-                  </div>
-                )}
-
-                {/* PM2.5 */}
-                {lote.sensor_atual.pm25 && (
-                  <div className="bg-gradient-to-br from-green-50 to-green-100 p-4 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <Radio className="w-5 h-5 text-green-600" />
-                    </div>
-                    <p className="text-xs text-gray-600">Partículas PM2.5</p>
-                    <p className="text-2xl font-bold text-green-900 mt-1">
-                      {lote.sensor_atual.pm25.toFixed(0)}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">µg/m³ (Ideal: {'<'}25)</p>
-                  </div>
-                )}
+                <h4 className="security-recommendation-card__title">{item.title} na {item.sala}</h4>
+                <p className="security-recommendation-card__copy">{item.description}</p>
+                <button type="button" className="security-recommendation-card__action">
+                  {item.action} →
+                </button>
               </div>
+            </article>
+          ))}
+        </div>
+      </section>
 
-              {/* Gráficos de Histórico */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Gráfico Temperatura e Umidade */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm">Temperatura & Umidade - {periodoHistorico === '24h' ? 'Últimas 24h' : 'Últimos 7 dias'}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <ResponsiveContainer width="100%" height={200}>
-                      <LineChart data={lote.historico}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="timestamp"
-                          tick={{ fontSize: 10 }}
-                          interval="preserveStartEnd"
-                          tickFormatter={(value) =>
-                            format(new Date(value), periodoHistorico === '24h' ? 'HH:mm' : 'dd/MM HH:mm')
-                          }
-                        />
-                        <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
-                        <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
-                        <Tooltip
-                          labelFormatter={(value) =>
-                            format(new Date(value as string), 'dd/MM/yyyy HH:mm')
-                          }
-                        />
-                        <Legend iconSize={10} wrapperStyle={{ fontSize: '12px' }} />
-                        <Line 
-                          yAxisId="left"
-                          type="monotone" 
-                          dataKey="temperatura" 
-                          stroke="#f97316" 
-                          strokeWidth={2}
-                          name="Temp (°C)"
-                          dot={false}
-                        />
-                        <Line 
-                          yAxisId="right"
-                          type="monotone" 
-                          dataKey="umidade" 
-                          stroke="#3b82f6" 
-                          strokeWidth={2}
-                          name="Umidade (%)"
-                          dot={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
+      <section className="security-projection">
+        <div className="security-projection__media">
+          <img
+            src="https://lh3.googleusercontent.com/aida-public/AB6AXuC_eDXJ9LqoqTL2a8OTwGlI15nxEFS-03ABeNlY36TowxjnKNlByFUd8h-RjmAPSiVpq-GgA_TB5BNpNqQXi0KT3o66__RciM9C7dze37V0yLUen9DTnETV8DZIS2h2giE5AGgFujXxtocWHcfHQ0voAI9HU1L8IncjQuTqaFjQbAYT6Uvs95xNNNuIkDVMIoJ_FzrGgDfvhG7XqzPcn7PfPSPqgAMzNF7vAef6dTT0akYJfnhBfT1ezJezigWd1UY0jqnpsmpKHzA"
+            alt="Microscopic view of mushroom mycelium structure"
+            className="security-projection__image"
+          />
+        </div>
 
-                {/* Gráfico CO2 */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-sm">Nível de CO₂ - {periodoHistorico === '24h' ? 'Últimas 24h' : 'Últimos 7 dias'}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <ResponsiveContainer width="100%" height={200}>
-                      <AreaChart data={lote.historico}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                        <XAxis
-                          dataKey="timestamp"
-                          tick={{ fontSize: 10 }}
-                          interval="preserveStartEnd"
-                          tickFormatter={(value) =>
-                            format(new Date(value), periodoHistorico === '24h' ? 'HH:mm' : 'dd/MM HH:mm')
-                          }
-                        />
-                        <YAxis tick={{ fontSize: 10 }} />
-                        <Tooltip
-                          labelFormatter={(value) =>
-                            format(new Date(value as string), 'dd/MM/yyyy HH:mm')
-                          }
-                        />
-                        <Legend iconSize={10} wrapperStyle={{ fontSize: '12px' }} />
-                        <Area 
-                          type="monotone" 
-                          dataKey="co2" 
-                          stroke="#9333ea" 
-                          fill="#c084fc"
-                          fillOpacity={0.3}
-                          strokeWidth={2}
-                          name="CO₂ (ppm)"
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </CardContent>
-                </Card>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })}
+        <div className="security-projection__content">
+          <span className="security-projection__eyebrow">
+            <Sparkles className="h-4 w-4" />
+            Conclusão de IA Mycelium Pro
+          </span>
+          <h2 className="security-projection__title">
+            Projeção operacional da semana
+          </h2>
+          <p className="security-projection__headline">
+            {projecaoOperacional.headline}
+            {projecaoOperacional.emphasis ? (
+              <span> A sala mais sensível agora é {projecaoOperacional.emphasis}.</span>
+            ) : null}
+          </p>
+          <div className="security-projection__metrics">
+            <div className="security-projection__metric">
+              <span className="security-projection__metric-label">Blocos em frutificação</span>
+              <strong className="security-projection__metric-value">{projecaoOperacional.blocosFrutificando}</strong>
+            </div>
+            <div className="security-projection__metric">
+              <span className="security-projection__metric-label">Eficiência ambiental</span>
+              <strong className="security-projection__metric-value">{projecaoOperacional.eficiencia.toFixed(1)}%</strong>
+            </div>
+          </div>
+        </div>
+      </section>
 
-	      {/* Card de Informações dos Sensores */}
-	      <Card className="bg-blue-50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-blue-900">
-            <Activity size={20} />
-            Sensores IoT Configurados
-          </CardTitle>
-        </CardHeader>
-	        <CardContent className="text-sm text-blue-900 space-y-2">
-	          <p><strong>SHT45:</strong> Sensor de temperatura e umidade de alta precisão</p>
-	          <p><strong>SCD41:</strong> Sensor NDIR de CO₂ para monitoramento contínuo da sala</p>
-	          <p><strong>Origem dos dados:</strong> ESP32 WROOM enviando leituras para o endpoint de ingestão</p>
-	          <p><strong>Câmeras conectadas:</strong> {cameras.length} cadastrada(s) na API</p>
-	          <p><strong>Controladores de sala:</strong> {controladoresSala.length} cadastrado(s) na API</p>
-	          <p><strong>Persistência:</strong> Leituras gravadas em `leituras_sensores` para histórico e análise</p>
-	        </CardContent>
-	      </Card>
+      <section className="security-details">
+        <div className="security-details__head">
+          <h3 className="security-section-title security-section-title--sm">Detalhes técnicos por sala</h3>
+          <p className="security-section-copy">Os gráficos e controles continuam disponíveis, mas com menor protagonismo do que status, alertas e ação.</p>
+        </div>
+
+        <Accordion type="multiple" className="security-details__list">
+          {visibleSalas.map((sala) => (
+            <AccordionItem key={`tech-${sala.sala}`} value={`tech-${sala.sala}`} className="security-details__item">
+              <AccordionTrigger className="security-details__trigger">
+                <div className="security-details__trigger-copy">
+                  <p className="security-details__trigger-title">{sala.sala}</p>
+                  <p className="security-details__trigger-subtitle">
+                    Lote de referência: {sala.primaryLote.codigo_lote} • {sala.statusLabel}
+                  </p>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="security-details__content">
+                <div className="security-details__grid">
+                  <div className="security-details__charts">
+                    <Card className="security-details__card">
+                      <CardHeader>
+                        <CardTitle className="text-sm">Temperatura & Umidade • {periodoHistorico === '24h' ? 'Últimas 24h' : 'Últimos 7 dias'}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ResponsiveContainer width="100%" height={220}>
+                          <LineChart data={sala.primaryLote.historico}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                            <XAxis dataKey="timestamp" tick={{ fontSize: 10 }} interval="preserveStartEnd" tickFormatter={(value) => format(new Date(value), periodoHistorico === '24h' ? 'HH:mm' : 'dd/MM HH:mm')} />
+                            <YAxis yAxisId="left" tick={{ fontSize: 10 }} />
+                            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} />
+                            <Tooltip labelFormatter={(value) => format(new Date(value as string), 'dd/MM/yyyy HH:mm')} />
+                            <Legend iconSize={10} wrapperStyle={{ fontSize: '12px' }} />
+                            <Line yAxisId="left" type="monotone" dataKey="temperatura" stroke="#f97316" strokeWidth={2} name="Temp (°C)" dot={false} />
+                            <Line yAxisId="right" type="monotone" dataKey="umidade" stroke="#3b82f6" strokeWidth={2} name="Umidade (%)" dot={false} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+
+                    <Card className="security-details__card">
+                      <CardHeader>
+                        <CardTitle className="text-sm">Nível de CO₂ • {periodoHistorico === '24h' ? 'Últimas 24h' : 'Últimos 7 dias'}</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <ResponsiveContainer width="100%" height={220}>
+                          <AreaChart data={sala.primaryLote.historico}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                            <XAxis dataKey="timestamp" tick={{ fontSize: 10 }} interval="preserveStartEnd" tickFormatter={(value) => format(new Date(value), periodoHistorico === '24h' ? 'HH:mm' : 'dd/MM HH:mm')} />
+                            <YAxis tick={{ fontSize: 10 }} />
+                            <Tooltip labelFormatter={(value) => format(new Date(value as string), 'dd/MM/yyyy HH:mm')} />
+                            <Legend iconSize={10} wrapperStyle={{ fontSize: '12px' }} />
+                            <Area type="monotone" dataKey="co2" stroke="#355f2f" fill="#86a77b" fillOpacity={0.22} strokeWidth={2} name="CO₂ (ppm)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  <Card className="security-details__card security-details__card--aside">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-sm">
+                        <Activity className="h-4 w-4" />
+                        Sensores & infraestrutura
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm text-[#445042]">
+                      <p><strong>SHT45:</strong> temperatura e umidade</p>
+                      <p><strong>SCD41:</strong> CO₂ contínuo na sala</p>
+                      <p><strong>Câmeras:</strong> {cameras.length} cadastrada(s)</p>
+                      <p><strong>Controladores:</strong> {controladoresSala.length} cadastrado(s)</p>
+                      <p><strong>Persistência:</strong> leituras em <code>leituras_sensores</code></p>
+                    </CardContent>
+                  </Card>
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </section>
 
       <Dialog open={!isMobileViewport && controladorDialogOpen} onOpenChange={handleControladorDialogChange}>
         <DialogContent className="top-[50%] left-[50%] h-[82dvh] w-[76vw] max-w-3xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border p-5">
@@ -1940,26 +2327,6 @@ export function Seguranca() {
           )}
         </DialogContent>
       </Dialog>
-
-	      {/* Procedimentos de Emergência */}
-	      <Card className="bg-red-50 border-l-4 border-l-red-500">
-	        <CardHeader>
-	          <CardTitle className="flex items-center gap-2 text-red-900">
-	            <AlertTriangle size={20} />
-	            Recomendações Operacionais
-	          </CardTitle>
-	        </CardHeader>
-	        <CardContent className="text-sm text-red-900 space-y-2">
-            {recomendacoesOperacionais.resumo && (
-              <p className="font-medium">{recomendacoesOperacionais.resumo}</p>
-            )}
-            <ul className="space-y-2">
-              {recomendacoesOperacionais.itens.map((item, index) => (
-                <li key={`${item}-${index}`}>• {item}</li>
-              ))}
-            </ul>
-	        </CardContent>
-	      </Card>
     </div>
   );
 }
