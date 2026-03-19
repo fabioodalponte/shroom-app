@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .block_detection import detect_blocks_in_process
+from .block_detection import _empty_detection_result, detect_blocks_in_process
 
 
 def main() -> int:
@@ -30,6 +30,16 @@ def main() -> int:
     if not image_path:
         print(json.dumps({"error": "image_path is required"}))
         return 1
+
+    try:
+        import ultralytics  # type: ignore
+    except Exception as exc:
+        result = _empty_detection_result(
+            payload.get("config") or {},
+            error=f"ultralytics import failed in {sys.executable}: {exc}",
+        )
+        print(json.dumps(result))
+        return 0
 
     result = detect_blocks_in_process(
         image_path=Path(str(image_path)),

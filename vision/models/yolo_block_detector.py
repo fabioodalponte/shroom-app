@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -67,7 +68,7 @@ def load_block_detector(
             model=None,
             model_path=model_path,
             device=device,
-            error=f"ultralytics import failed: {exc}",
+            error=f"ultralytics import failed in {sys.executable}: {exc}",
         )
 
     try:

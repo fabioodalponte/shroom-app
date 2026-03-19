@@ -5,7 +5,24 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="${VISION_ENV_FILE:-$ROOT_DIR/vision/config/.env.local}"
 LOG_DIR="$ROOT_DIR/vision/logs"
 LOG_FILE="$LOG_DIR/cron.log"
-PYTHON_BIN="${VISION_PYTHON_BIN:-$ROOT_DIR/.venv/bin/python3}"
+
+resolve_python_bin() {
+  if [[ -n "${VISION_PYTHON_BIN:-}" ]]; then
+    printf '%s\n' "$VISION_PYTHON_BIN"
+    return
+  fi
+  if [[ -x "$ROOT_DIR/.venv311/bin/python3" ]]; then
+    printf '%s\n' "$ROOT_DIR/.venv311/bin/python3"
+    return
+  fi
+  if [[ -x "$ROOT_DIR/.venv/bin/python3" ]]; then
+    printf '%s\n' "$ROOT_DIR/.venv/bin/python3"
+    return
+  fi
+  command -v python3
+}
+
+PYTHON_BIN="$(resolve_python_bin)"
 
 mkdir -p "$LOG_DIR"
 exec >>"$LOG_FILE" 2>&1

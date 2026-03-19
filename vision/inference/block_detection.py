@@ -13,6 +13,13 @@ from typing import Any
 from ..models.yolo_block_detector import load_block_detector
 
 
+def _runtime_info() -> dict[str, str]:
+    return {
+        "python_executable": sys.executable,
+        "python_version": sys.version.replace("\n", " "),
+    }
+
+
 def _empty_detection_result(
     config: dict[str, Any] | None,
     error: str | None = None,
@@ -25,6 +32,7 @@ def _empty_detection_result(
         "blocos_detectados": 0,
         "detections": [],
         "error": error,
+        **_runtime_info(),
     }
 
 
@@ -92,6 +100,7 @@ def detect_blocks_in_process(
             "blocos_detectados": len(detections),
             "detections": detections,
             "error": None,
+            **_runtime_info(),
         }
         if logger:
             logger.info(
@@ -209,18 +218,31 @@ def detect_blocks(
     """Detect mushroom blocks in one image without breaking the pipeline."""
     path = Path(image_path)
     if logger:
-        logger.info("vision block_detection_start image_path=%s", path)
+        logger.info(
+            "vision block_detection_start image_path=%s python_executable=%s python_version=%s",
+            path,
+            sys.executable,
+            sys.version.replace("\n", " "),
+        )
 
     inference_config = (config or {}).get("inference", {})
     use_subprocess = bool(inference_config.get("isolate_process", True))
     if use_subprocess:
+        if logger:
+            logger.info(
+                "vision block_detection_subprocess_launch image_path=%s subprocess_python=%s",
+                path,
+                sys.executable,
+            )
         result = _detect_blocks_in_subprocess(path, config=config, logger=logger)
         if logger:
             logger.info(
-                "vision block_detection_complete image_path=%s model_available=%s blocks_detected=%s",
+                "vision block_detection_complete image_path=%s model_available=%s blocks_detected=%s worker_python=%s worker_python_version=%s",
                 path,
                 result.get("error") is None,
                 result.get("blocos_detectados", 0),
+                result.get("python_executable"),
+                result.get("python_version"),
             )
             logger.info("vision blocks_detected=%s image_path=%s", result.get("blocos_detectados", 0), path)
         return result

@@ -229,6 +229,13 @@ python3 -m pip install -r vision/requirements.raspberry.txt
 
 `torch` e `torchvision` devem ser instalados separadamente com uma dupla compativel com a arquitetura e a versao do Python da placa.
 
+Os wrappers em `vision/scripts/` agora priorizam:
+
+1. `VISION_PYTHON_BIN`
+2. `.venv311/bin/python3`
+3. `.venv/bin/python3`
+4. `python3` do sistema
+
 ## Vinculo explicito com lote
 
 O pipeline agora aceita `lote_id` explicito.
