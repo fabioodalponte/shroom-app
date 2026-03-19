@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap");
 /*! tailwindcss v4.1.3 | MIT License | https://tailwindcss.com */
 @layer properties {
   @supports (((-webkit-hyphens: none)) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color: rgb(from red r g b)))) {
@@ -3391,4 +3391,51 @@ h1, h2, h3, h4, h5, h6 {
     opacity: var(--tw-exit-opacity, 1);
     transform: translate3d(var(--tw-exit-translate-x, 0), var(--tw-exit-translate-y, 0), 0) scale3d(var(--tw-exit-scale, 1), var(--tw-exit-scale, 1), var(--tw-exit-scale, 1)) rotate(var(--tw-exit-rotate, 0));
   }
+}
+
+:root {
+  --app-background: #faf9f5;
+  --app-surface-low: #f4f4f0;
+  --app-surface-card: #ffffff;
+  --app-surface-variant: #e8e8e4;
+  --app-primary: #375328;
+  --app-primary-soft: #4e6b3e;
+  --app-secondary: #75584d;
+  --app-tertiary: #6a4300;
+  --app-text: #1a1c1a;
+  --app-muted: #74796e;
+  --app-outline: rgba(116, 121, 110, 0.14);
+  --app-shadow: 0 12px 40px rgba(26, 28, 26, 0.05);
+}
+
+html {
+  font-size: 100%;
+  background: var(--app-background);
+}
+
+@media (min-width: 1024px) {
+  html {
+    font-size: 80%;
+  }
+}
+
+body {
+  background: radial-gradient(circle at top left, rgba(78, 107, 62, 0.04), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(117, 88, 77, 0.05), transparent 24%),
+    var(--app-background);
+  color: var(--app-text);
+  font-family: 'Inter', sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Manrope', sans-serif;
+}
+
+::selection {
+  background: rgba(55, 83, 40, 0.18);
+  color: var(--app-text);
 }
