@@ -101,6 +101,32 @@ function parseNumber(value: unknown): number | null {
   return null;
 }
 
+function validateExplicitSalaIdInput(value: unknown) {
+  if (value === undefined || value === null) {
+    return { provided: false, normalized: null, valid: true, raw: null };
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return { provided: true, normalized: null, valid: false, raw };
+  }
+
+  const normalized = db.resolveSalaId(raw);
+  const validFormat = /^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(raw);
+  return {
+    provided: true,
+    normalized,
+    valid: Boolean(validFormat && normalized === raw),
+    raw,
+  };
+}
+
+function validateNumericInput(rawValue: unknown, label: string) {
+  if (rawValue === undefined || rawValue === null || rawValue === '') return null;
+  if (parseNumber(rawValue) !== null) return null;
+  return { field: label, received: rawValue };
+}
+
 function parseTimestamp(value: unknown): string | null {
   if (typeof value === 'number' && Number.isFinite(value)) {
     const millis = value > 1_000_000_000_000 ? value : value * 1000;
@@ -407,14 +433,30 @@ app.post("/make-server-5522cecf/sensores/ingest", async (c) => {
     const pin = String(body.pin ?? body.datastream ?? body.virtual_pin ?? '').toUpperCase();
     const singleValue = body.value ?? body.valor ?? body.data;
 
-    let temperatura =
-      parseNumber(body.temperatura ?? body.temperature ?? body.temp ?? body.v0 ?? body.V0 ?? c.req.query('temperatura'));
-    let umidade =
-      parseNumber(body.umidade ?? body.humidity ?? body.hum ?? body.v1 ?? body.V1 ?? c.req.query('umidade'));
-    let co2 =
-      parseNumber(body.co2_ppm ?? body.co2 ?? body.v2 ?? body.V2 ?? c.req.query('co2'));
-    const luminosidade =
-      parseNumber(body.luminosidade_lux ?? body.lux ?? body.v3 ?? body.V3 ?? c.req.query('luminosidade_lux'));
+    const rawTemperatura = body.temperatura ?? body.temperature ?? body.temp ?? body.v0 ?? body.V0 ?? c.req.query('temperatura');
+    const rawUmidade = body.umidade ?? body.humidity ?? body.hum ?? body.v1 ?? body.V1 ?? c.req.query('umidade');
+    const rawCo2 = body.co2_ppm ?? body.co2 ?? body.v2 ?? body.V2 ?? c.req.query('co2');
+    const rawLuminosidade = body.luminosidade_lux ?? body.lux ?? body.v3 ?? body.V3 ?? c.req.query('luminosidade_lux');
+
+    const invalidMetrics = [
+      validateNumericInput(rawTemperatura, 'temperatura'),
+      validateNumericInput(rawUmidade, 'umidade'),
+      validateNumericInput(rawCo2, 'co2'),
+      validateNumericInput(rawLuminosidade, 'luminosidade_lux'),
+    ].filter(Boolean);
+
+    if (invalidMetrics.length > 0) {
+      return c.json({
+        error: 'Payload contém métricas inválidas',
+        code: 'sensor_invalid_metrics',
+        details: invalidMetrics,
+      }, 400);
+    }
+
+    let temperatura = parseNumber(rawTemperatura);
+    let umidade = parseNumber(rawUmidade);
+    let co2 = parseNumber(rawCo2);
+    const luminosidade = parseNumber(rawLuminosidade);
 
     if (pin === 'V0' && temperatura === null) temperatura = parseNumber(singleValue);
     if (pin === 'V1' && umidade === null) umidade = parseNumber(singleValue);
@@ -426,8 +468,26 @@ app.post("/make-server-5522cecf/sensores/ingest", async (c) => {
 
     let loteId = String(body.lote_id ?? body.loteId ?? c.req.query('lote_id') ?? '').trim();
     const codigoLote = String(body.codigo_lote ?? body.codigoLote ?? c.req.query('codigo_lote') ?? '').trim();
-    const requestedSalaId =
-      db.resolveSalaId(body.sala_id ?? body.salaId ?? body.sala ?? c.req.query('sala_id') ?? c.req.query('sala')) || null;
+    const sensorId =
+      String(body.sensor_id ?? body.sensorId ?? body.device_id ?? body.deviceId ?? body.sensor ?? c.req.query('sensor_id') ?? '').trim() || null;
+    const explicitSalaInput = body.sala_id ?? body.salaId ?? c.req.query('sala_id');
+    const explicitSalaValidation = validateExplicitSalaIdInput(explicitSalaInput);
+    if (explicitSalaValidation.provided && !explicitSalaValidation.valid) {
+      return c.json({
+        error: 'sala_id inválido',
+        code: 'sensor_invalid_sala_id',
+        details: {
+          expected_format: 'snake_case, ex: sala_1 ou sala_de_cultivo_2',
+          received: explicitSalaValidation.raw,
+        },
+      }, 400);
+    }
+
+    const requestedSalaId = explicitSalaValidation.normalized || null;
+    const requestedCodigoSala =
+      String(body.codigo_sala ?? body.codigoSala ?? c.req.query('codigo_sala') ?? '').trim() || null;
+    const requestedSala =
+      String(body.sala ?? c.req.query('sala') ?? '').trim() || null;
     let loteLookup: Awaited<ReturnType<typeof db.getLoteByCodigo>> | null = null;
     let loteById: Awaited<ReturnType<typeof db.getLoteById>> | null = null;
 
@@ -440,22 +500,30 @@ app.post("/make-server-5522cecf/sensores/ingest", async (c) => {
       loteById = await db.getLoteById(loteId);
     }
 
-    const resolvedSalaId =
-      requestedSalaId ||
-      db.resolveSalaId(loteLookup?.sala) ||
-      db.resolveSalaId(loteById?.sala) ||
-      null;
+    const salaResolution = await db.resolveSalaAssignment({
+      sala_id: requestedSalaId,
+      codigo_sala: requestedCodigoSala,
+      sala: requestedSala,
+      lote_id: loteId || null,
+    });
+    const resolvedSalaId = salaResolution.sala_id;
 
     const timestamp = parseTimestamp(body.timestamp ?? body.ts ?? c.req.query('timestamp'));
 
-    console.log('[sensores.ingest] lote resolution', {
+    console.log('[sensores.ingest] room resolution', {
+      sensor_id: sensorId,
       requested_lote_id: String(body.lote_id ?? body.loteId ?? c.req.query('lote_id') ?? '').trim() || null,
       requested_codigo_lote: codigoLote || null,
       requested_sala_id: requestedSalaId,
+      requested_codigo_sala: requestedCodigoSala,
+      requested_sala: requestedSala,
       resolved_lote_id: loteId || null,
       resolved_codigo_lote: loteLookup?.codigo_lote || codigoLote || null,
       resolved_sala: loteLookup?.sala || null,
       resolved_sala_id: resolvedSalaId,
+      resolution_strategy: salaResolution.strategy,
+      fallback_used: salaResolution.fallback,
+      resolution_details: salaResolution.details,
       metrics: {
         temperatura,
         umidade,
@@ -465,13 +533,30 @@ app.post("/make-server-5522cecf/sensores/ingest", async (c) => {
       timestamp: timestamp || null,
     });
 
-    if (!loteId && !resolvedSalaId) {
-      return c.json({ error: 'lote_id/codigo_lote ou sala_id/sala é obrigatório para registrar leitura' }, 400);
+    if (!resolvedSalaId) {
+      return c.json({
+        error: 'Não foi possível resolver sala_id para a leitura',
+        code: 'sensor_room_unresolved',
+        warning: 'Envie sala_id explicitamente. Fallbacks aceitos temporariamente: lote vinculado, sala, codigo_sala.',
+        details: {
+          sensor_id: sensorId,
+          requested_lote_id: loteId || null,
+          requested_codigo_lote: codigoLote || null,
+          requested_sala_id: requestedSalaId,
+          requested_codigo_sala: requestedCodigoSala,
+          requested_sala: requestedSala,
+          resolution_strategy: salaResolution.strategy,
+          resolution_order: ['sala_id', 'lote.sala_id', 'fallback legado por sala/codigo_sala'],
+        },
+      }, 400);
     }
 
     const leitura = await db.createLeituraSensor({
+      sensor_id: sensorId,
       lote_id: loteId || null,
       sala_id: resolvedSalaId,
+      codigo_sala: requestedCodigoSala,
+      sala: requestedSala,
       temperatura,
       umidade,
       co2_ppm: co2,
@@ -479,11 +564,23 @@ app.post("/make-server-5522cecf/sensores/ingest", async (c) => {
       timestamp,
     });
 
+    console.log('[sensores.ingest] success', {
+      sensor_id: sensorId,
+      sala_id: resolvedSalaId,
+      strategy: salaResolution.strategy,
+      binding: salaResolution.fallback ? 'fallback_legacy_or_lote' : 'explicit_sala_id',
+    });
+
     return c.json({
       success: true,
       leitura_id: leitura.id,
+      sensor_id: sensorId,
       lote_id: loteId || null,
       sala_id: resolvedSalaId,
+      resolution: {
+        strategy: salaResolution.strategy,
+        fallback_used: salaResolution.fallback,
+      },
       received: {
         temperatura,
         umidade,

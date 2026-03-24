@@ -62,6 +62,12 @@ function formatFase(fase?: string | null) {
   return FASE_LABEL[fase] || fase;
 }
 
+function parseDateValue(value?: string | null) {
+  if (!value) return null;
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
+}
+
 export function Lotes() {
   const [lotes, setLotes] = useState<LoteItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -142,12 +148,6 @@ export function Lotes() {
       </div>
     );
   }
-
-  const parseDateValue = (value?: string | null) => {
-    if (!value) return null;
-    const parsed = parseISO(value);
-    return isValid(parsed) ? parsed : null;
-  };
 
   return (
     <div className="p-6 space-y-6">

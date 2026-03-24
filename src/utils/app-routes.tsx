@@ -26,6 +26,7 @@ import { OperacaoInoculacao } from "../app/pages/OperacaoInoculacao";
 import { OperacaoFrutificacao } from "../app/pages/OperacaoFrutificacao";
 import { CatalogoCogumelos } from "../app/pages/CatalogoCogumelos";
 import { Salas } from "../app/pages/Salas";
+import { SalaDetails } from "../app/pages/SalaDetails";
 
 export const router = createBrowserRouter([
   {
@@ -75,6 +76,10 @@ export const router = createBrowserRouter([
       {
         path: "salas",
         Component: Salas,
+      },
+      {
+        path: "salas/:id",
+        Component: SalaDetails,
       },
       {
         path: "colheita",

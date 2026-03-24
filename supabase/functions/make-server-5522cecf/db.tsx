@@ -118,29 +118,189 @@ export async function getSalaById(id?: string | null) {
 async function findSalaByLegacyName(name?: string | null) {
   const normalizedName = normalizeSalaLabel(name);
   if (!normalizedName) return null;
-  return getSalaById(normalizedName);
+  return (await getSalaById(normalizedName)) || (await getSalaByCode(normalizedName)) || (await getSalaByNome(normalizedName));
 }
 
-async function resolveSalaAssignment(input: { sala_id?: unknown; sala?: unknown }) {
+async function getSalaByCode(code?: unknown) {
+  const normalizedCode = resolveSalaCode(code);
+  if (!normalizedCode) return null;
+
+  const { data, error } = await supabase
+    .from('salas')
+    .select('*')
+    .eq('codigo', normalizedCode)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+async function getSalaByNome(nome?: unknown) {
+  const normalizedNome = normalizeSalaLabel(nome);
+  if (!normalizedNome) return null;
+
+  const { data, error } = await supabase
+    .from('salas')
+    .select('*')
+    .ilike('nome', normalizedNome)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
+}
+
+export interface SalaAssignmentResolution {
+  sala_id: string | null;
+  sala: string | null;
+  strategy: 'explicit_sala_id' | 'lote_sala_id' | 'legacy_sala' | 'legacy_codigo_sala' | 'unresolved';
+  fallback: boolean;
+  details: {
+    requested_sala_id: string | null;
+    requested_codigo_sala: string | null;
+    requested_sala: string | null;
+    lote_id: string | null;
+    lote_sala_id: string | null;
+    lote_sala: string | null;
+  };
+}
+
+export async function resolveSalaAssignment(input: {
+  sala_id?: unknown;
+  codigo_sala?: unknown;
+  sala?: unknown;
+  lote_id?: unknown;
+}): Promise<SalaAssignmentResolution> {
   const explicitSalaId = resolveSalaId(input.sala_id);
+  const requestedCodigoSala = String(input.codigo_sala ?? '').trim() || null;
+  const requestedSala = normalizeSalaLabel(input.sala);
+  const loteId = String(input.lote_id ?? '').trim() || null;
+
   if (explicitSalaId) {
     const sala = await getSalaById(explicitSalaId);
     if (sala) {
-      return { sala_id: sala.id, sala: sala.nome };
+      return {
+        sala_id: sala.id,
+        sala: sala.nome,
+        strategy: 'explicit_sala_id',
+        fallback: false,
+        details: {
+          requested_sala_id: explicitSalaId,
+          requested_codigo_sala: requestedCodigoSala,
+          requested_sala: requestedSala,
+          lote_id: loteId,
+          lote_sala_id: null,
+          lote_sala: null,
+        },
+      };
     }
   }
 
-  const legacySala = normalizeSalaLabel(input.sala);
-  if (!legacySala) {
-    return { sala_id: null, sala: null };
+  if (loteId) {
+    const { data: lote, error: loteError } = await supabase
+      .from('lotes')
+      .select('id, sala, sala_id')
+      .eq('id', loteId)
+      .maybeSingle();
+
+    if (loteError) throw loteError;
+
+    const loteSalaId = resolveSalaId(lote?.sala_id);
+    if (loteSalaId) {
+      const sala = await getSalaById(loteSalaId);
+      if (sala) {
+        return {
+          sala_id: sala.id,
+          sala: sala.nome,
+          strategy: 'lote_sala_id',
+          fallback: true,
+          details: {
+            requested_sala_id: explicitSalaId,
+            requested_codigo_sala: requestedCodigoSala,
+            requested_sala: requestedSala,
+            lote_id: loteId,
+            lote_sala_id: loteSalaId,
+            lote_sala: normalizeSalaLabel(lote?.sala),
+          },
+        };
+      }
+    }
+
+    const loteSalaLegada = normalizeSalaLabel(lote?.sala);
+    if (loteSalaLegada) {
+      const sala = await findSalaByLegacyName(loteSalaLegada);
+      if (sala) {
+        return {
+          sala_id: sala.id,
+          sala: sala.nome,
+          strategy: 'legacy_sala',
+          fallback: true,
+          details: {
+            requested_sala_id: explicitSalaId,
+            requested_codigo_sala: requestedCodigoSala,
+            requested_sala: requestedSala,
+            lote_id: loteId,
+            lote_sala_id: loteSalaId,
+            lote_sala: loteSalaLegada,
+          },
+        };
+      }
+    }
   }
 
-  const sala = await findSalaByLegacyName(legacySala);
-  if (sala) {
-    return { sala_id: sala.id, sala: sala.nome };
+  if (requestedSala) {
+    const sala = await findSalaByLegacyName(requestedSala);
+    if (sala) {
+      return {
+        sala_id: sala.id,
+        sala: sala.nome,
+        strategy: 'legacy_sala',
+        fallback: true,
+        details: {
+          requested_sala_id: explicitSalaId,
+          requested_codigo_sala: requestedCodigoSala,
+          requested_sala: requestedSala,
+          lote_id: loteId,
+          lote_sala_id: null,
+          lote_sala: null,
+        },
+      };
+    }
   }
 
-  return { sala_id: null, sala: legacySala };
+  if (requestedCodigoSala) {
+    const sala = await getSalaByCode(requestedCodigoSala);
+    if (sala) {
+      return {
+        sala_id: sala.id,
+        sala: sala.nome,
+        strategy: 'legacy_codigo_sala',
+        fallback: true,
+        details: {
+          requested_sala_id: explicitSalaId,
+          requested_codigo_sala: requestedCodigoSala,
+          requested_sala: requestedSala,
+          lote_id: loteId,
+          lote_sala_id: null,
+          lote_sala: null,
+        },
+      };
+    }
+  }
+
+  return {
+    sala_id: null,
+    sala: requestedSala,
+    strategy: 'unresolved',
+    fallback: false,
+    details: {
+      requested_sala_id: explicitSalaId,
+      requested_codigo_sala: requestedCodigoSala,
+      requested_sala: requestedSala,
+      lote_id: loteId,
+      lote_sala_id: null,
+      lote_sala: null,
+    },
+  };
 }
 
 export async function createSala(input: {
@@ -894,8 +1054,11 @@ export async function getBlocosResumoByLoteIds(loteIds: string[]) {
 }
 
 interface LeituraSensorInput {
+  sensor_id?: string | null;
   lote_id?: string | null;
   sala_id?: string | null;
+  codigo_sala?: string | null;
+  sala?: string | null;
   temperatura?: number | null;
   umidade?: number | null;
   co2_ppm?: number | null;
@@ -913,21 +1076,17 @@ export function resolveSalaId(value: unknown) {
 }
 
 export async function createLeituraSensor(input: LeituraSensorInput) {
-  let resolvedSalaId = resolveSalaId(input.sala_id);
+  const salaResolution = await resolveSalaAssignment({
+    sala_id: input.sala_id,
+    codigo_sala: input.codigo_sala,
+    sala: input.sala,
+    lote_id: input.lote_id,
+  });
 
-  if (!resolvedSalaId && input.lote_id) {
-    const { data: lote, error: loteError } = await supabase
-      .from('lotes')
-      .select('id, sala')
-      .eq('id', input.lote_id)
-      .maybeSingle();
+  const resolvedSalaId = salaResolution.sala_id;
 
-    if (loteError) throw loteError;
-    resolvedSalaId = resolveSalaId(lote?.sala);
-  }
-
-  if (!resolvedSalaId && !input.lote_id) {
-    throw new Error('sala_id ou lote_id é obrigatório para registrar leitura ambiental');
+  if (!resolvedSalaId) {
+    throw new Error('Não foi possível resolver sala_id para registrar leitura ambiental');
   }
 
   const payload: Record<string, unknown> = {};

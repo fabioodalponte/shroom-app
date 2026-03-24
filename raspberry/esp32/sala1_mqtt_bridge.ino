@@ -36,8 +36,13 @@ const char *TOPIC_ONLINE = "state/chacara/sala1/online";
 // Recomendado manter OFF quando o bridge MQTT->API estiver ativo.
 // ===========================
 #define ENABLE_HTTP_FALLBACK 0
-const char *SUPABASE_ANON_KEY = "SEU_ANON_KEY_AQUI";
-const char *INGEST_URL = "https://SEU_PROJETO.supabase.co/functions/v1/make-server-5522cecf/sensores/ingest?key=SUA_SENSORES_INGEST_KEY&codigo_lote=LOT-2024-001";
+const char *SHROOMOS_SENSOR_ID = "sensor_sala_1_a";
+const char *SHROOMOS_SALA_ID = "sala_1";
+const char *INGEST_URL = "https://SEU_PROJETO.supabase.co/functions/v1/make-server-5522cecf/sensores/ingest";
+const char *INGEST_HEADER_NAME = "x-sensores-key";
+const char *SENSORES_INGEST_KEY = "SUA_SENSORES_INGEST_KEY";
+const int HTTP_RETRY_COUNT = 3;
+const unsigned long HTTP_RETRY_DELAY_MS = 1500;
 
 // ===========================
 // Sensores
@@ -95,43 +100,66 @@ bool readSCD41(float &co2ppm) {
   return true;
 }
 
-void sendToBackendHTTP(float tempC, float humPct, float co2ppm) {
+bool sendToBackendHTTP(float tempC, float humPct, float co2ppm) {
 #if ENABLE_HTTP_FALLBACK
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  WiFiClientSecure client;
-  client.setInsecure();
-
-  HTTPClient http;
-  if (!http.begin(client, INGEST_URL)) {
-    Serial.println("Falha ao iniciar HTTP");
-    return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[HTTP] WiFi offline, cancelando envio");
+    return false;
   }
 
-  http.addHeader("Content-Type", "application/json");
-  String authHeader = "Bearer ";
-  authHeader += SUPABASE_ANON_KEY;
-  http.addHeader("Authorization", authHeader);
-  http.addHeader("apikey", String(SUPABASE_ANON_KEY));
-
   String body = "{";
+  body += "\"sensor_id\":\"" + String(SHROOMOS_SENSOR_ID) + "\",";
+  body += "\"sala_id\":\"" + String(SHROOMOS_SALA_ID) + "\",";
   body += "\"temperatura\":" + String(tempC, 2) + ",";
   body += "\"umidade\":" + String(humPct, 2) + ",";
   body += "\"co2\":" + String(co2ppm, 0);
   body += "}";
 
-  int code = http.POST(body);
-  String resp = http.getString();
-  http.end();
+  for (int attempt = 1; attempt <= HTTP_RETRY_COUNT; attempt++) {
+    WiFiClientSecure client;
+    client.setInsecure();
 
-  Serial.print("HTTP POST code: ");
-  Serial.println(code);
-  Serial.print("HTTP resp: ");
-  Serial.println(resp);
+    HTTPClient http;
+    if (!http.begin(client, INGEST_URL)) {
+      Serial.printf("[HTTP] Falha ao iniciar cliente (tentativa %d/%d)\n", attempt, HTTP_RETRY_COUNT);
+      delay(HTTP_RETRY_DELAY_MS);
+      continue;
+    }
+
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader(INGEST_HEADER_NAME, SENSORES_INGEST_KEY);
+
+    Serial.printf("[HTTP] Enviando leitura para %s (tentativa %d/%d)\n", SHROOMOS_SALA_ID, attempt, HTTP_RETRY_COUNT);
+    Serial.print("[HTTP] Payload: ");
+    Serial.println(body);
+
+    int code = http.POST(body);
+    String resp = http.getString();
+    http.end();
+
+    Serial.print("[HTTP] Status: ");
+    Serial.println(code);
+    Serial.print("[HTTP] Resposta: ");
+    Serial.println(resp);
+
+    if (code >= 200 && code < 300) {
+      Serial.printf("[HTTP] Ingest OK para sensor=%s sala_id=%s\n", SHROOMOS_SENSOR_ID, SHROOMOS_SALA_ID);
+      return true;
+    }
+
+    if (attempt < HTTP_RETRY_COUNT) {
+      Serial.printf("[HTTP] Retry em %lu ms...\n", HTTP_RETRY_DELAY_MS);
+      delay(HTTP_RETRY_DELAY_MS);
+    }
+  }
+
+  Serial.printf("[HTTP] Falha final ao enviar leitura para sala_id=%s\n", SHROOMOS_SALA_ID);
+  return false;
 #else
   (void)tempC;
   (void)humPct;
   (void)co2ppm;
+  return false;
 #endif
 }
 
@@ -246,6 +274,10 @@ void loop() {
     Serial.println(" ppm");
 
     publishMQTT(tempC, humPct, co2ppm);
-    sendToBackendHTTP(tempC, humPct, co2ppm);
+    bool httpOk = sendToBackendHTTP(tempC, humPct, co2ppm);
+    if (ENABLE_HTTP_FALLBACK) {
+      Serial.print("[HTTP] Resultado final: ");
+      Serial.println(httpOk ? "OK" : "FAIL");
+    }
   }
 }
