@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date
 import json
 from pathlib import Path
 import sys
@@ -25,9 +26,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--metadata-dir", default="vision/dataset/annotations/block_detector_v1/metadata", help="Output directory for sampled metadata sidecars")
     parser.add_argument("--manifest-path", default="vision/dataset/annotations/block_detector_v1/sample_manifest.json", help="Path to the generated sample manifest")
     parser.add_argument("--sample-size", type=int, default=100, help="Number of images to sample")
+    parser.add_argument("--start-date", type=parse_date_arg, help="Inclusive start date in YYYY-MM-DD")
+    parser.add_argument("--end-date", type=parse_date_arg, help="Inclusive end date in YYYY-MM-DD")
     parser.add_argument("--link-mode", choices=["hardlink_or_copy", "copy", "symlink"], default="hardlink_or_copy", help="How to materialize selected files")
     parser.add_argument("--clean", action="store_true", help="Remove previous sampled images before writing the new selection")
     return parser
+
+
+def parse_date_arg(value: str) -> date:
+    try:
+      return date.fromisoformat(value)
+    except ValueError as exc:
+      raise argparse.ArgumentTypeError(f"Invalid date '{value}'. Expected YYYY-MM-DD.") from exc
+
+
+def filter_entries_by_date(entries, start_date: date | None, end_date: date | None):
+    if start_date and end_date and start_date > end_date:
+        raise ValueError("--start-date cannot be after --end-date")
+
+    if not start_date and not end_date:
+        return entries
+
+    filtered = []
+    for entry in entries:
+        entry_date = entry.timestamp.date()
+        if start_date and entry_date < start_date:
+            continue
+        if end_date and entry_date > end_date:
+            continue
+        filtered.append(entry)
+    return filtered
 
 
 def main() -> int:
@@ -43,6 +71,14 @@ def main() -> int:
     entries = build_image_entries(source_dir)
     if not entries:
         raise FileNotFoundError(f"No valid images found in {source_dir}")
+
+    entries = filter_entries_by_date(entries, args.start_date, args.end_date)
+    if not entries:
+        raise FileNotFoundError(
+            f"No valid images found in {source_dir} for the requested date range "
+            f"start={args.start_date.isoformat() if args.start_date else None} "
+            f"end={args.end_date.isoformat() if args.end_date else None}"
+        )
 
     sampled_entries = sample_diverse_entries(entries, args.sample_size)
 
@@ -80,6 +116,8 @@ def main() -> int:
         "source_dir": str(source_dir),
         "sample_size_requested": args.sample_size,
         "sample_size_selected": len(sampled_entries),
+        "start_date": args.start_date.isoformat() if args.start_date else None,
+        "end_date": args.end_date.isoformat() if args.end_date else None,
         "output_dir": str(output_dir),
         "metadata_dir": str(metadata_dir),
         "manifest_entries": manifest_rows,
