@@ -1,0 +1,166 @@
+{
+  "executed_at": "2026-03-21T05:50:36.268472+00:00",
+  "mode": "yolov8",
+  "image_path": "vision/storage/artifacts/2026/03/21/snapshot_20260321T055011206589Z.jpg",
+  "lote_id": null,
+  "capture_metadata": {
+    "captured_at": "2026-03-21T05:50:11.203456+00:00",
+    "camera_url": "https://cam.cogumelos.net/capture",
+    "http_status": 200,
+    "content_type": "image/jpeg",
+    "size_bytes": 29829,
+    "source": "esp32-cam",
+    "capture_attempt": 1,
+    "capture_attempts_total": 3,
+    "request_timeout_seconds": 15
+  },
+  "quality_check": {
+    "status": "valid",
+    "dataset_eligible": true,
+    "metrics": {
+      "resolution": {
+        "width": 640,
+        "height": 480,
+        "total_pixels": 307200
+      },
+      "brightness_mean": 71.07,
+      "contrast_stddev": 58.81,
+      "sharpness_score": 16.15
+    },
+    "flags": {
+      "low_resolution": false,
+      "too_dark": false,
+      "too_bright": false,
+      "too_blurry": false,
+      "invalid_image": false
+    },
+    "thresholds": {
+      "min_width": 640,
+      "min_height": 480,
+      "too_dark_below": 55.0,
+      "too_bright_above": 210.0,
+      "too_blurry_below": 12.0
+    },
+    "error": null
+  },
+  "block_detection": {
+    "enabled": true,
+    "model": "/home/shroom/workspace/shroom-app/vision/models/block_detector.pt",
+    "device": "cpu",
+    "blocos_detectados": 3,
+    "detections": [
+      {
+        "label": "bloco",
+        "confidence": 0.6437,
+        "bbox": [
+          0.23,
+          6.49,
+          111.05,
+          123.03
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.5719,
+        "bbox": [
+          266.7,
+          0.0,
+          397.93,
+          83.95
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.3647,
+        "bbox": [
+          137.2,
+          138.29,
+          224.47,
+          242.76
+        ]
+      }
+    ],
+    "error": null,
+    "python_executable": "/home/shroom/workspace/shroom-app/.venv311/bin/python3",
+    "python_version": "3.11.9 (main, Mar 18 2026, 22:08:28) [GCC 14.2.0]"
+  },
+  "summary": {
+    "lote_id": null,
+    "blocos_detectados": 3,
+    "confianca_media_blocos": 0.5268,
+    "block_detection_error": null,
+    "contaminacao_visual_detectada": false,
+    "colonizacao_estimada": null,
+    "quality_status": "valid",
+    "dataset_eligible": true,
+    "dataset_class": "valid",
+    "remote_persisted": true
+  },
+  "detections": [
+    {
+      "label": "bloco",
+      "confidence": 0.6437,
+      "bbox": [
+        0.23,
+        6.49,
+        111.05,
+        123.03
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.5719,
+      "bbox": [
+        266.7,
+        0.0,
+        397.93,
+        83.95
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.3647,
+      "bbox": [
+        137.2,
+        138.29,
+        224.47,
+        242.76
+      ]
+    }
+  ],
+  "notes": [
+    "Pipeline executado com quality check local e detector inicial de blocos.",
+    "A deteccao de colonizacao e contaminacao_visual ainda nao esta implementada.",
+    "Se o modelo YOLO nao existir, a deteccao retorna lista vazia sem quebrar o fluxo."
+  ],
+  "target_labels": [
+    "bloco",
+    "colonizacao",
+    "contaminacao_visual"
+  ],
+  "dataset_classification": {
+    "enabled": true,
+    "applied": true,
+    "dataset_class": "valid",
+    "quality_status": "valid",
+    "dataset_eligible": true,
+    "target_image_path": "vision/dataset/raw/valid/snapshot_20260321T055011206589Z.jpg",
+    "target_metadata_path": "vision/dataset/raw/valid/snapshot_20260321T055011206589Z.json",
+    "method": "hardlink",
+    "error": null
+  },
+  "remote_persistence": {
+    "enabled": true,
+    "remote_persisted": true,
+    "storage_uploaded": true,
+    "db_record_created": true,
+    "image_storage_path": "vision/captures/2026/03/21/snapshot_20260321T055011206589Z.jpg",
+    "record_id": "33f7f06b-82f9-45df-bb45-77cf3da38bbf",
+    "db_table": "vision_pipeline_runs",
+    "retry_manifest_path": null,
+    "error": null
+  },
+  "remote_persisted": true,
+  "storage_uploaded": true,
+  "db_record_created": true
+}
