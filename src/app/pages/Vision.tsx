@@ -1,23 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { format } from 'date-fns';
+import { format, formatDistanceToNowStrict } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   AlertTriangle,
-  CheckCircle2,
+  Camera,
   Cloud,
-  Database,
+  DatabaseZap,
+  Building2,
   Eye,
   ImageOff,
   Loader2,
-  Moon,
+  Package,
   RefreshCcw,
   ScanSearch,
-  Sun,
+  Sparkles,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import { Badge } from '../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { fetchServer } from '../../utils/supabase/client';
@@ -53,6 +53,7 @@ interface VisionDetection {
 }
 
 type RemoteStatus = 'ok' | 'failed' | 'pending';
+type VisionTone = 'ok' | 'warning' | 'critical' | 'neutral';
 
 const QUALITY_STATUS_LABELS: Record<string, string> = {
   valid: 'Valida',
@@ -64,12 +65,12 @@ const QUALITY_STATUS_LABELS: Record<string, string> = {
 };
 
 const QUALITY_STATUS_CLASSNAMES: Record<string, string> = {
-  valid: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  too_dark: 'border-slate-200 bg-slate-100 text-slate-700',
-  too_bright: 'border-amber-200 bg-amber-50 text-amber-700',
-  too_blurry: 'border-violet-200 bg-violet-50 text-violet-700',
-  low_resolution: 'border-orange-200 bg-orange-50 text-orange-700',
-  invalid_image: 'border-red-200 bg-red-50 text-red-700',
+  valid: 'vision-pill--valid',
+  too_dark: 'vision-pill--neutral',
+  too_bright: 'vision-pill--warning',
+  too_blurry: 'vision-pill--warning',
+  low_resolution: 'vision-pill--warning',
+  invalid_image: 'vision-pill--critical',
 };
 
 function formatDateTime(value?: string | null) {
@@ -92,8 +93,8 @@ function getQualityLabel(status?: string | null) {
 }
 
 function getQualityBadgeClassName(status?: string | null) {
-  if (!status) return 'border-slate-200 bg-slate-100 text-slate-700';
-  return QUALITY_STATUS_CLASSNAMES[status] || 'border-slate-200 bg-slate-100 text-slate-700';
+  if (!status) return 'vision-pill--neutral';
+  return QUALITY_STATUS_CLASSNAMES[status] || 'vision-pill--neutral';
 }
 
 function getRemotePersistence(run?: VisionRun | null) {
@@ -123,9 +124,9 @@ function getRemoteStatusLabel(status: RemoteStatus) {
 }
 
 function getRemoteStatusClassName(status: RemoteStatus) {
-  if (status === 'ok') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-  if (status === 'failed') return 'border-red-200 bg-red-50 text-red-700';
-  return 'border-amber-200 bg-amber-50 text-amber-700';
+  if (status === 'ok') return 'vision-pill--valid';
+  if (status === 'failed') return 'vision-pill--critical';
+  return 'vision-pill--warning';
 }
 
 function getVisionDetections(run?: VisionRun | null): VisionDetection[] {
@@ -190,6 +191,12 @@ function formatConfidencePercent(value?: number | null) {
   return `${Math.round(percent)}%`;
 }
 
+function getConfidencePercentValue(value?: number | null) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null;
+  const numericValue = Number(value);
+  return numericValue <= 1 ? numericValue * 100 : numericValue;
+}
+
 function buildVisionQuery(filters: { qualityStatus: string; remoteStatus: string; days: string; limit?: number }) {
   const params = new URLSearchParams();
 
@@ -220,16 +227,273 @@ function JsonBlock({ title, value }: { title: string; value: unknown }) {
   );
 }
 
-function MetricCard({ label, value, helper }: { label: string; value: string; helper?: string }) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <p className="text-xs uppercase tracking-[0.16em] text-[#1A1A1A]/45">{label}</p>
-        <p className="mt-2 text-2xl font-semibold text-[#1A1A1A]">{value}</p>
-        {helper ? <p className="mt-1 text-xs text-[#1A1A1A]/55">{helper}</p> : null}
-      </CardContent>
-    </Card>
-  );
+function getVisionQualityHeadline(status?: string | null) {
+  switch (status) {
+    case 'valid':
+      return 'Excelente';
+    case 'too_blurry':
+      return 'Atenção';
+    case 'too_dark':
+    case 'too_bright':
+      return 'Instável';
+    default:
+      return 'Em revisão';
+  }
+}
+
+function getRunCaptureLabel(run?: VisionRun | null) {
+  if (!run) return 'Captura não selecionada';
+  const source = run.source || run.camera_url || 'vision-pipeline';
+  return source;
+}
+
+function getRunRoomLabel(run?: VisionRun | null) {
+  const room =
+    run?.summary_json?.sala ||
+    run?.summary_json?.room ||
+    run?.raw_result_json?.sala ||
+    run?.raw_result_json?.room ||
+    null;
+  return room ? String(room) : 'Sala não informada';
+}
+
+function getRunLotLabel(run?: VisionRun | null) {
+  const lot =
+    run?.summary_json?.codigo_lote ||
+    run?.summary_json?.lote_codigo ||
+    run?.summary_json?.lote ||
+    run?.raw_result_json?.codigo_lote ||
+    run?.raw_result_json?.lote_codigo ||
+    null;
+  return lot ? String(lot) : `Run ${run?.id?.slice(0, 8) || '--'}`;
+}
+
+function getAverageDetectionConfidence(detections: VisionDetection[]) {
+  const values = detections
+    .map((item) => item.confidence)
+    .filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
+
+  if (!values.length) return null;
+  const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return formatConfidencePercent(avg);
+}
+
+function getAverageDetectionConfidenceValue(detections: VisionDetection[]) {
+  const values = detections
+    .map((item) => getConfidencePercentValue(item.confidence))
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function getRunAverageConfidenceValue(run: VisionRun | null | undefined, detections: VisionDetection[]) {
+  const explicitCandidates = [
+    run?.summary_json?.confianca_media_blocos,
+    run?.summary_json?.confianca_media,
+    run?.raw_result_json?.summary?.confianca_media_blocos,
+    run?.raw_result_json?.summary?.confianca_media,
+    run?.raw_result_json?.confianca_media_blocos,
+    run?.raw_result_json?.confianca_media,
+  ];
+
+  for (const candidate of explicitCandidates) {
+    const normalized = getConfidencePercentValue(Number(candidate));
+    if (normalized !== null) return normalized;
+  }
+
+  return getAverageDetectionConfidenceValue(detections);
+}
+
+function getRunExpectedBlocks(run?: VisionRun | null) {
+  const candidates = [
+    run?.summary_json?.quantidade_esperada,
+    run?.summary_json?.expected_blocks,
+    run?.summary_json?.expected_block_count,
+    run?.raw_result_json?.summary?.quantidade_esperada,
+    run?.raw_result_json?.summary?.expected_blocks,
+    run?.raw_result_json?.summary?.expected_block_count,
+    run?.raw_result_json?.quantidade_esperada,
+    run?.raw_result_json?.expected_blocks,
+  ];
+
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric)) {
+      return Math.max(0, Math.round(numeric));
+    }
+  }
+
+  return null;
+}
+
+function getRelativeDateTime(value?: string | null) {
+  if (!value) return 'Sem horário';
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+
+  return formatDistanceToNowStrict(parsed, { addSuffix: true, locale: ptBR });
+}
+
+function formatDetectionLabel(label?: string | null) {
+  const normalized = String(label || 'Bloco').trim();
+  if (!normalized) return 'Bloco';
+  if (normalized.toLowerCase() === 'bloco' || normalized.toLowerCase() === 'block') return 'Bloco';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function getDetectionTone(confidence?: number | null): VisionTone {
+  const percent = getConfidencePercentValue(confidence);
+  if (percent === null) return 'warning';
+  if (percent >= 85) return 'ok';
+  if (percent >= 70) return 'warning';
+  return 'critical';
+}
+
+function getDifferenceTone(difference: number | null, expected: number | null): VisionTone {
+  if (difference === null || expected === null) return 'neutral';
+  const ratio = expected > 0 ? Math.abs(difference) / expected : Math.abs(difference);
+  if (ratio >= 0.2) return 'critical';
+  if (ratio >= 0.08) return 'warning';
+  return 'ok';
+}
+
+function getDifferenceLabel(detected: number, expected: number | null) {
+  if (expected === null) {
+    return {
+      value: 'Sem referência',
+      meta: 'Lote sem base comparável nesta captura.',
+      tone: 'neutral' as VisionTone,
+    };
+  }
+
+  const difference = detected - expected;
+  if (difference === 0) {
+    return {
+      value: 'Dentro do esperado',
+      meta: `Esperado ${expected} bloco(s).`,
+      tone: 'ok' as VisionTone,
+    };
+  }
+
+  const direction = difference > 0 ? 'acima' : 'abaixo';
+  return {
+    value: `${Math.abs(difference)} ${direction}`,
+    meta: `Esperado ${expected} bloco(s).`,
+    tone: getDifferenceTone(difference, expected),
+  };
+}
+
+function getVisionOverallStatus({
+  qualityStatus,
+  confidence,
+  difference,
+  expected,
+}: {
+  qualityStatus?: string | null;
+  confidence: number | null;
+  difference: number | null;
+  expected: number | null;
+}) {
+  let severity = 0;
+
+  if (qualityStatus === 'invalid_image') severity = Math.max(severity, 2);
+  if (qualityStatus === 'too_blurry' || qualityStatus === 'low_resolution') severity = Math.max(severity, 1);
+  if (qualityStatus === 'too_dark' || qualityStatus === 'too_bright') severity = Math.max(severity, 1);
+
+  if (confidence !== null) {
+    if (confidence < 70) severity = Math.max(severity, 2);
+    else if (confidence < 85) severity = Math.max(severity, 1);
+  }
+
+  const differenceTone = getDifferenceTone(difference, expected);
+  if (differenceTone === 'critical') severity = Math.max(severity, 2);
+  if (differenceTone === 'warning') severity = Math.max(severity, 1);
+
+  if (severity === 2) {
+    return {
+      tone: 'critical' as VisionTone,
+      label: 'Crítico',
+      summary: 'Imagem ou contagem pedem revisão manual antes de usar a captura como referência.',
+    };
+  }
+
+  if (severity === 1) {
+    return {
+      tone: 'warning' as VisionTone,
+      label: 'Atenção',
+      summary: 'A captura é utilizável, mas há sinais visuais para validar antes da decisão operacional.',
+    };
+  }
+
+  return {
+    tone: 'ok' as VisionTone,
+    label: 'OK',
+    summary: 'Leitura estável, com confiança consistente e pronta para acompanhamento operacional.',
+  };
+}
+
+function getVisionRecommendations({
+  qualityStatus,
+  confidence,
+  difference,
+  expected,
+  detected,
+  remoteStatus,
+}: {
+  qualityStatus?: string | null;
+  confidence: number | null;
+  difference: number | null;
+  expected: number | null;
+  detected: number;
+  remoteStatus: RemoteStatus;
+}) {
+  const recommendations: Array<{ title: string; impact: string }> = [];
+
+  if (qualityStatus === 'too_dark' || qualityStatus === 'too_bright') {
+    recommendations.push({
+      title: 'Ajustar iluminação da captura',
+      impact: 'Melhora leitura do modelo e reduz ruído nas próximas análises.',
+    });
+  }
+
+  if (qualityStatus === 'too_blurry' || qualityStatus === 'low_resolution') {
+    recommendations.push({
+      title: 'Revisar foco e enquadramento da câmera',
+      impact: 'Aumenta nitidez das boxes e reduz falso positivo em nova rodada.',
+    });
+  }
+
+  if (difference !== null && expected !== null && Math.abs(difference) > 0) {
+    recommendations.push({
+      title: difference < 0 ? 'Revisar possível subcontagem' : 'Validar excesso de blocos detectados',
+      impact: `${Math.abs(difference)} bloco(s) ${difference < 0 ? 'abaixo' : 'acima'} do esperado para este lote.`,
+    });
+  }
+
+  if (confidence !== null && confidence < 80) {
+    recommendations.push({
+      title: 'Validar manualmente regiões com baixa confiança',
+      impact: 'Evita decisão operacional baseada em detecções frágeis.',
+    });
+  }
+
+  if (remoteStatus !== 'ok') {
+    recommendations.push({
+      title: 'Confirmar persistência da rodada',
+      impact: 'Garante histórico íntegro e rastreabilidade da captura selecionada.',
+    });
+  }
+
+  if (!recommendations.length) {
+    recommendations.push({
+      title: 'Manter captura como referência operacional',
+      impact: `${detected} bloco(s) com leitura estável e pronta para comparação futura.`,
+    });
+  }
+
+  return recommendations.slice(0, 2);
 }
 
 export function Vision() {
@@ -246,7 +510,10 @@ export function Vision() {
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [showDetectionOverlay, setShowDetectionOverlay] = useState(true);
-  const [selectedImageSize, setSelectedImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [featuredImageSize, setFeaturedImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [detailImageSize, setDetailImageSize] = useState<{ width: number; height: number } | null>(null);
+  const [featuredImageLoading, setFeaturedImageLoading] = useState(false);
+  const [detailImageLoading, setDetailImageLoading] = useState(false);
   const selectedRunId = searchParams.get('run');
 
   const loadVisionData = useCallback(async (withRefreshing = false) => {
@@ -346,306 +613,480 @@ export function Vision() {
   }, [selectedRunId]);
 
   useEffect(() => {
-    setSelectedImageSize(null);
     setShowDetectionOverlay(true);
   }, [selectedRunId]);
 
-  const latestRemote = useMemo(() => getRemotePersistence(latestRun), [latestRun]);
-  const latestRemoteStatus = useMemo(() => getRemoteStatus(latestRun), [latestRun]);
   const selectedRunDetections = useMemo(() => getVisionDetections(selectedRun), [selectedRun]);
   const selectedRunDetectedBlocks = useMemo(() => getDetectedBlocksCount(selectedRun), [selectedRun]);
+  const featuredRun = selectedRun || latestRun;
+  const featuredRemote = useMemo(() => getRemotePersistence(featuredRun), [featuredRun]);
+  const featuredRemoteStatus = useMemo(() => getRemoteStatus(featuredRun), [featuredRun]);
+  const featuredDetections = useMemo(() => getVisionDetections(featuredRun), [featuredRun]);
+  const featuredDetectedBlocks = useMemo(() => getDetectedBlocksCount(featuredRun), [featuredRun]);
+  const featuredConfidence = useMemo(() => getRunAverageConfidenceValue(featuredRun, featuredDetections), [featuredDetections, featuredRun]);
+  const featuredConfidenceLabel = useMemo(() => formatConfidencePercent(featuredConfidence), [featuredConfidence]);
+  const featuredRunLabel = selectedRun ? 'Captura selecionada' : 'Última captura processada';
+  const featuredExpectedBlocks = useMemo(() => getRunExpectedBlocks(featuredRun), [featuredRun]);
+  const featuredDifference = featuredExpectedBlocks !== null ? featuredDetectedBlocks - featuredExpectedBlocks : null;
+  const featuredDifferenceInfo = useMemo(
+    () => getDifferenceLabel(featuredDetectedBlocks, featuredExpectedBlocks),
+    [featuredDetectedBlocks, featuredExpectedBlocks],
+  );
+  const featuredStatus = useMemo(
+    () => getVisionOverallStatus({
+      qualityStatus: featuredRun?.quality_status,
+      confidence: featuredConfidence,
+      difference: featuredDifference,
+      expected: featuredExpectedBlocks,
+    }),
+    [featuredConfidence, featuredDifference, featuredExpectedBlocks, featuredRun?.quality_status],
+  );
+  const featuredRecommendations = useMemo(
+    () => getVisionRecommendations({
+      qualityStatus: featuredRun?.quality_status,
+      confidence: featuredConfidence,
+      difference: featuredDifference,
+      expected: featuredExpectedBlocks,
+      detected: featuredDetectedBlocks,
+      remoteStatus: featuredRemoteStatus,
+    }),
+    [featuredConfidence, featuredDetectedBlocks, featuredDifference, featuredExpectedBlocks, featuredRemoteStatus, featuredRun?.quality_status],
+  );
+  const featuredAnalysisRelative = useMemo(
+    () => getRelativeDateTime(featuredRun?.captured_at || featuredRun?.executed_at),
+    [featuredRun?.captured_at, featuredRun?.executed_at],
+  );
+  const featuredAnalysisTimestamp = useMemo(
+    () => formatDateTime(featuredRun?.captured_at || featuredRun?.executed_at),
+    [featuredRun?.captured_at, featuredRun?.executed_at],
+  );
+
+  useEffect(() => {
+    setFeaturedImageSize(null);
+    setFeaturedImageLoading(Boolean(featuredRun?.preview_url));
+  }, [featuredRun?.id, featuredRun?.preview_url]);
+
+  useEffect(() => {
+    setDetailImageSize(null);
+    setDetailImageLoading(Boolean(selectedRun?.preview_url));
+  }, [selectedRun?.id, selectedRun?.preview_url]);
 
   if (loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-[#546A4A]" />
+      <div className="vision-page">
+        <div className="vision-shell vision-shell--loading">
+          <div className="vision-main">
+            <section className="vision-skeleton vision-skeleton--hero" />
+            <section className="vision-summary-grid">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="vision-skeleton vision-skeleton--card" />
+              ))}
+            </section>
+            <section className="vision-skeleton vision-skeleton--analysis" />
+            <section className="vision-capture-layout">
+              <div className="vision-skeleton vision-skeleton--image" />
+              <div className="vision-skeleton vision-skeleton--aside" />
+            </section>
+          </div>
+          <aside className="vision-aside">
+            <div className="vision-skeleton vision-skeleton--history" />
+          </aside>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="font-['Cormorant_Garamond'] text-4xl font-bold text-[#1A1A1A] lg:text-[42px]">
-            Vision Ops
-          </h1>
-          <p className="mt-1 max-w-3xl text-sm text-[#1A1A1A]/70 sm:text-base">
-            Observabilidade operacional das capturas da ESP32-CAM, qualidade de imagem, classificacao de dataset e persistencia remota.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap lg:justify-end">
-          <Select value={qualityStatusFilter} onValueChange={setQualityStatusFilter}>
-            <SelectTrigger className="w-full sm:w-[180px] bg-white">
-              <SelectValue placeholder="Status de qualidade" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Qualidade: todas</SelectItem>
-              <SelectItem value="valid">Valida</SelectItem>
-              <SelectItem value="too_dark">Escura demais</SelectItem>
-              <SelectItem value="too_bright">Clara demais</SelectItem>
-              <SelectItem value="too_blurry">Desfocada</SelectItem>
-              <SelectItem value="low_resolution">Baixa resolucao</SelectItem>
-              <SelectItem value="invalid_image">Imagem invalida</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={remoteStatusFilter} onValueChange={setRemoteStatusFilter}>
-            <SelectTrigger className="w-full sm:w-[180px] bg-white">
-              <SelectValue placeholder="Persistencia remota" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Persistencia: todas</SelectItem>
-              <SelectItem value="ok">Persistencia OK</SelectItem>
-              <SelectItem value="failed">Falha remota</SelectItem>
-              <SelectItem value="pending">Pendente</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Select value={daysFilter} onValueChange={setDaysFilter}>
-            <SelectTrigger className="w-full sm:w-[160px] bg-white">
-              <SelectValue placeholder="Periodo" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">Ultimo dia</SelectItem>
-              <SelectItem value="7">Ultimos 7 dias</SelectItem>
-              <SelectItem value="30">Ultimos 30 dias</SelectItem>
-              <SelectItem value="all">Sem corte</SelectItem>
-            </SelectContent>
-          </Select>
-
-          <Button type="button" variant="outline" onClick={() => void loadVisionData(true)} disabled={refreshing}>
-            {refreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-2 h-4 w-4" />}
-            Atualizar
-          </Button>
-        </div>
-      </div>
-
-      {error ? (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="mt-0.5 h-5 w-5 text-red-600" />
-              <div>
-                <p className="font-medium text-red-700">Erro ao carregar dados do vision</p>
-                <p className="text-sm text-red-600">{error}</p>
+    <div className="vision-page">
+      <div className="vision-shell">
+        <div className="vision-main">
+          <header className="vision-header">
+            <div>
+              <div className="vision-header__eyebrow">
+                <span className="vision-pill vision-pill--soft">Análise concluída</span>
+                <span className="vision-header__meta">Capture ID: #{featuredRun?.id?.slice(0, 8) || 'VIS-0000'}</span>
+              </div>
+              <h1 className="vision-title">Monitoramento de Visão</h1>
+              <div className="vision-meta-row">
+                <span className="vision-chip">
+                  <Camera size={14} />
+                  {getRunCaptureLabel(featuredRun)}
+                </span>
+                <span className="vision-chip">
+                  <Building2 size={14} />
+                  {getRunRoomLabel(featuredRun)}
+                </span>
+                <span className="vision-chip">
+                  <Package size={14} />
+                  {getRunLotLabel(featuredRun)}
+                </span>
               </div>
             </div>
-            <Button type="button" variant="outline" onClick={() => void loadVisionData(true)}>
-              Tentar novamente
-            </Button>
-          </CardContent>
-        </Card>
-      ) : null}
 
-      {!latestRun ? (
-        <Card>
-          <CardContent className="flex min-h-[240px] flex-col items-center justify-center gap-3 p-8 text-center">
-            <ScanSearch className="h-10 w-10 text-[#546A4A]/60" />
-            <div>
-              <p className="text-lg font-semibold text-[#1A1A1A]">Nenhuma captura vision encontrada</p>
-              <p className="mt-1 text-sm text-[#1A1A1A]/65">
-                Rode o pipeline local e confirme que os registros estao sendo persistidos na tabela <code>vision_pipeline_runs</code>.
-              </p>
+            <div className="vision-header__actions">
+              <Button type="button" variant="outline" onClick={() => void loadVisionData(true)} disabled={refreshing} className="vision-action vision-action--secondary">
+                {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                Recalibrar
+              </Button>
+              {featuredRun ? (
+                <Button type="button" onClick={() => void openRunDetails(featuredRun.id)} className="vision-action vision-action--primary">
+                  <Eye className="h-4 w-4" />
+                  Abrir captura
+                </Button>
+              ) : null}
             </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.95fr)]">
-          <Card className="overflow-hidden">
-            <CardHeader className="flex flex-col gap-3 border-b bg-white/70 sm:flex-row sm:items-start sm:justify-between">
+          </header>
+
+          <section className="vision-filters">
+            <Select value={qualityStatusFilter} onValueChange={setQualityStatusFilter}>
+              <SelectTrigger className="vision-select">
+                <SelectValue placeholder="Status de qualidade" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Qualidade: todas</SelectItem>
+                <SelectItem value="valid">Válida</SelectItem>
+                <SelectItem value="too_dark">Escura demais</SelectItem>
+                <SelectItem value="too_bright">Clara demais</SelectItem>
+                <SelectItem value="too_blurry">Desfocada</SelectItem>
+                <SelectItem value="low_resolution">Baixa resolução</SelectItem>
+                <SelectItem value="invalid_image">Imagem inválida</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={remoteStatusFilter} onValueChange={setRemoteStatusFilter}>
+              <SelectTrigger className="vision-select">
+                <SelectValue placeholder="Persistência remota" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Persistência: todas</SelectItem>
+                <SelectItem value="ok">Persistência OK</SelectItem>
+                <SelectItem value="failed">Falha remota</SelectItem>
+                <SelectItem value="pending">Pendente</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={daysFilter} onValueChange={setDaysFilter}>
+              <SelectTrigger className="vision-select vision-select--compact">
+                <SelectValue placeholder="Período" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">Último dia</SelectItem>
+                <SelectItem value="7">Últimos 7 dias</SelectItem>
+                <SelectItem value="30">Últimos 30 dias</SelectItem>
+                <SelectItem value="all">Sem corte</SelectItem>
+              </SelectContent>
+            </Select>
+          </section>
+
+          {latestRun ? (
+            <section className={cn('vision-status-card', `vision-status-card--${featuredStatus.tone}`)}>
+              <div className="vision-status-card__main">
+                <div className="vision-status-card__eyebrow">
+                  <span className={cn('vision-status-card__dot', `vision-status-card__dot--${featuredStatus.tone}`)} />
+                  Status geral da análise
+                </div>
+                <div className="vision-status-card__headline">
+                  <strong>{featuredStatus.label}</strong>
+                  <span>{featuredStatus.summary}</span>
+                </div>
+              </div>
+              <div className="vision-status-card__meta">
+                <span>{getQualityLabel(featuredRun?.quality_status)}</span>
+                <span>{featuredConfidenceLabel || 'Sem confiança'}</span>
+                <span>{featuredExpectedBlocks !== null ? `Esperado ${featuredExpectedBlocks}` : 'Sem referência'}</span>
+              </div>
+            </section>
+          ) : null}
+
+          {error ? (
+            <section className="vision-inline-alert">
+              <div className="vision-inline-alert__content">
+                <AlertTriangle className="h-5 w-5" />
+                <div>
+                  <p className="vision-inline-alert__title">Erro ao carregar dados do vision</p>
+                  <p className="vision-inline-alert__copy">{error}</p>
+                </div>
+              </div>
+              <Button type="button" variant="outline" onClick={() => void loadVisionData(true)}>Tentar novamente</Button>
+            </section>
+          ) : null}
+
+          {!latestRun ? (
+            <section className="vision-empty">
+              <ScanSearch className="h-10 w-10 text-[#546A4A]/60" />
               <div>
-                <CardTitle className="flex items-center gap-2 text-xl text-[#1A1A1A]">
-                  <Eye className="h-5 w-5 text-[#546A4A]" />
-                  Ultima captura processada
-                </CardTitle>
-                <p className="mt-1 text-sm text-[#1A1A1A]/65">
-                  Executada em {formatDateTime(latestRun.executed_at)}
+                <p className="vision-empty__title">Nenhuma captura vision encontrada</p>
+                <p className="vision-empty__copy">
+                  Rode o pipeline local e confirme que os registros estão sendo persistidos na tabela <code>vision_pipeline_runs</code>.
                 </p>
               </div>
+            </section>
+          ) : (
+            <>
+              <section className="vision-summary-grid">
+                <article className="vision-summary-card">
+                  <p className="vision-summary-card__label">Blocos detectados</p>
+                  <p className="vision-summary-card__value">{featuredDetectedBlocks}</p>
+                  <p className="vision-summary-card__meta">
+                    {featuredExpectedBlocks !== null ? `Base esperada: ${featuredExpectedBlocks} bloco(s)` : 'Sem base comparável vinculada'}
+                  </p>
+                </article>
+                <article className={cn('vision-summary-card', `vision-summary-card--${featuredDifferenceInfo.tone}`)}>
+                  <p className="vision-summary-card__label">Diferença vs esperado</p>
+                  <p className="vision-summary-card__value">{featuredDifferenceInfo.value}</p>
+                  <p className="vision-summary-card__meta">{featuredDifferenceInfo.meta}</p>
+                </article>
+                <article className={cn('vision-summary-card', `vision-summary-card--${featuredStatus.tone}`)}>
+                  <p className="vision-summary-card__label">Status geral</p>
+                  <p className="vision-summary-card__value">{featuredStatus.label}</p>
+                  <p className="vision-summary-card__meta">
+                    {featuredConfidenceLabel ? `Confiança média ${featuredConfidenceLabel}` : 'Sem confiança média calculada'}
+                  </p>
+                </article>
+                <article className="vision-summary-card">
+                  <p className="vision-summary-card__label">Última análise</p>
+                  <p className="vision-summary-card__value vision-summary-card__value--tertiary">{featuredAnalysisRelative}</p>
+                  <p className="vision-summary-card__meta">{featuredAnalysisTimestamp}</p>
+                </article>
+              </section>
 
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="outline" className={cn('border', getQualityBadgeClassName(latestRun.quality_status))}>
-                  {getQualityLabel(latestRun.quality_status)}
-                </Badge>
-                <Badge variant="outline" className={cn('border', getRemoteStatusClassName(latestRemoteStatus))}>
-                  {getRemoteStatusLabel(latestRemoteStatus)}
-                </Badge>
-              </div>
-            </CardHeader>
+              <section className="vision-analysis-card">
+                <div className="vision-analysis-card__header">
+                  <div className="vision-analysis-card__icon">
+                    <Sparkles className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h2 className="vision-analysis-card__title">Conclusões da Análise</h2>
+                    <p className="vision-analysis-card__meta">
+                      Model: vision-pipeline • Processado em {formatDateTime(featuredRun?.executed_at)}
+                    </p>
+                  </div>
+                </div>
 
-            <CardContent className="grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="overflow-hidden rounded-2xl border bg-[#F8F6F2]">
-                {latestRun.preview_url ? (
-                  <img
-                    src={latestRun.preview_url}
-                    alt="Ultima captura do pipeline vision"
-                    className="aspect-[4/3] h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex aspect-[4/3] items-center justify-center text-[#1A1A1A]/45">
-                    <div className="flex flex-col items-center gap-2 text-center">
-                      <ImageOff className="h-8 w-8" />
-                      <p className="text-sm">Preview indisponivel no Storage</p>
-                      {latestRun.preview_error ? (
-                        <p className="max-w-[260px] text-xs text-red-600">{latestRun.preview_error}</p>
+                <div className="vision-analysis-columns">
+                  <div className="vision-analysis-column">
+                    <div className="vision-analysis-column__eyebrow">
+                      <span className="vision-analysis-column__dot vision-analysis-column__dot--primary" />
+                      Desenvolvimento de frutos
+                    </div>
+                    <p className="vision-analysis-column__copy">
+                      Detectamos <strong>{featuredDetectedBlocks} bloco(s)</strong> com confiança média de <strong>{featuredConfidenceLabel || 'N/D'}</strong>.
+                      {featuredDetections.length
+                        ? ' A distribuição das detecções está pronta para revisão visual com overlay.'
+                        : ' Esta captura não retornou detecções válidas nesta rodada.'}
+                    </p>
+                  </div>
+
+                  <div className="vision-analysis-column">
+                    <div className="vision-analysis-column__eyebrow">
+                      <span className="vision-analysis-column__dot vision-analysis-column__dot--tertiary" />
+                      Alertas e anomalias
+                    </div>
+                    <p className="vision-analysis-column__copy">
+                      {featuredRun?.preview_error
+                        ? `Preview indisponível: ${featuredRun.preview_error}`
+                        : featuredRemote.error
+                          ? `Persistência remota com alerta: ${featuredRemote.error}`
+                          : `Qualidade classificada como ${getQualityLabel(featuredRun?.quality_status)} e status remoto ${getRemoteStatusLabel(featuredRemoteStatus).toLowerCase()}.`}
+                    </p>
+                  </div>
+
+                  <div className="vision-analysis-column">
+                    <div className="vision-analysis-column__eyebrow">
+                      <span className="vision-analysis-column__dot vision-analysis-column__dot--soft" />
+                      Otimização de colheita
+                    </div>
+                    <p className="vision-analysis-column__copy">
+                      Dataset classificado como <strong>{featuredRun?.dataset_class || '-'}</strong>.
+                      {featuredRemote.remotePersisted
+                        ? ' Captura pronta para consulta operacional e histórico.'
+                        : ' Revisar persistência antes de considerar esta captura como referência oficial.'}
+                    </p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="vision-capture-layout">
+                <div>
+                  <p className="vision-section-label">{featuredRunLabel}</p>
+                  <div className="vision-capture-card">
+                    <div className="vision-capture-toolbar">
+                      <div className="vision-capture-pills">
+                        <span className="vision-pill vision-pill--soft">
+                          {featuredDetectedBlocks} bloco{featuredDetectedBlocks === 1 ? '' : 's'}
+                        </span>
+                        <span className={cn('vision-pill', getQualityBadgeClassName(featuredRun?.quality_status))}>
+                          {getQualityLabel(featuredRun?.quality_status)}
+                        </span>
+                        <span className={cn('vision-pill', getRemoteStatusClassName(featuredRemoteStatus))}>
+                          {getRemoteStatusLabel(featuredRemoteStatus)}
+                        </span>
+                      </div>
+
+                      {featuredDetections.length ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowDetectionOverlay((current) => !current)}
+                          className="vision-toggle"
+                        >
+                          {showDetectionOverlay ? 'Ocultar overlay' : 'Mostrar overlay'}
+                        </Button>
                       ) : null}
                     </div>
-                  </div>
-                )}
-              </div>
 
-              <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                  <MetricCard label="Capturada em" value={formatDateTime(latestRun.captured_at)} />
-                  <MetricCard label="Origem" value={latestRun.source || '-'} />
-                  <MetricCard label="Dataset" value={latestRun.dataset_class || '-'} helper={latestRun.dataset_eligible ? 'Apta para dataset' : 'Nao apta para dataset'} />
-                  <MetricCard label="Arquivo" value={latestRun.file_size ? `${Math.round((latestRun.file_size / 1024) * 10) / 10} KB` : '-'} helper={latestRun.storage_bucket ? `Bucket: ${latestRun.storage_bucket}` : undefined} />
-                </div>
+                    <div className="vision-capture-frame">
+                      {featuredImageLoading ? <div className="vision-image-loader" /> : null}
+                      {featuredRun?.preview_url ? (
+                        <>
+                          <img
+                            key={featuredRun.id}
+                            src={featuredRun.preview_url}
+                            alt="Preview da captura vision"
+                            className={cn('vision-capture-image', featuredImageLoading && 'is-loading')}
+                            onLoad={(event) => {
+                              const target = event.currentTarget;
+                              setFeaturedImageSize({
+                                width: target.naturalWidth,
+                                height: target.naturalHeight,
+                              });
+                              setFeaturedImageLoading(false);
+                            }}
+                            onError={() => {
+                              setFeaturedImageLoading(false);
+                            }}
+                          />
 
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <MetricCard label="Brilho" value={formatMetric(latestRun.brightness_mean)} helper="mean" />
-                  <MetricCard label="Contraste" value={formatMetric(latestRun.contrast_stddev)} helper="stddev" />
-                  <MetricCard label="Nitidez" value={formatMetric(latestRun.sharpness_score)} helper="score" />
-                </div>
+                          {showDetectionOverlay && featuredImageSize && featuredDetections.length ? (
+                            <div className="vision-overlay">
+                              {featuredDetections.map((detection, index) => {
+                                const [x1, y1, x2, y2] = detection.bbox;
+                                const left = Math.max(0, Math.min(100, (x1 / featuredImageSize.width) * 100));
+                                const top = Math.max(0, Math.min(100, (y1 / featuredImageSize.height) * 100));
+                                const width = Math.max(0, Math.min(100, ((x2 - x1) / featuredImageSize.width) * 100));
+                                const height = Math.max(0, Math.min(100, ((y2 - y1) / featuredImageSize.height) * 100));
+                                const confidenceLabel = formatConfidencePercent(detection.confidence);
+                                const overlayTone = getDetectionTone(detection.confidence);
 
-                <div className="rounded-2xl border bg-white p-4">
-                  <p className="text-xs uppercase tracking-[0.16em] text-[#1A1A1A]/45">Persistencia remota</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Badge variant="outline" className={latestRemote.remotePersisted ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}>
-                      <Cloud className="mr-1 h-3 w-3" />
-                      remote_persisted: {latestRemote.remotePersisted ? 'true' : 'false'}
-                    </Badge>
-                    <Badge variant="outline" className={latestRemote.storageUploaded ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}>
-                      <Database className="mr-1 h-3 w-3" />
-                      storage_uploaded: {latestRemote.storageUploaded ? 'true' : 'false'}
-                    </Badge>
-                    <Badge variant="outline" className={latestRemote.dbRecordCreated ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}>
-                      <CheckCircle2 className="mr-1 h-3 w-3" />
-                      db_record_created: {latestRemote.dbRecordCreated ? 'true' : 'false'}
-                    </Badge>
-                  </div>
-                  {latestRemote.error ? (
-                    <p className="mt-3 text-sm text-red-600">{latestRemote.error}</p>
-                  ) : null}
-                </div>
-
-                <Button type="button" className="w-full sm:w-auto" onClick={() => void openRunDetails(latestRun.id)}>
-                  Ver detalhes completos
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-            <Card className="border-l-4 border-l-emerald-500">
-              <CardContent className="p-5">
-                <div className="flex items-center gap-2 text-[#1A1A1A]/70">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span className="text-sm font-medium">Qualidade</span>
-                </div>
-                <p className="mt-3 text-2xl font-semibold text-[#1A1A1A]">{getQualityLabel(latestRun.quality_status)}</p>
-                <p className="mt-2 text-sm text-[#1A1A1A]/65">
-                  dataset_eligible: {latestRun.dataset_eligible ? 'true' : 'false'}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-l-4 border-l-[#546A4A]">
-              <CardContent className="p-5">
-                <div className="flex items-center gap-2 text-[#1A1A1A]/70">
-                  <ScanSearch className="h-4 w-4 text-[#546A4A]" />
-                  <span className="text-sm font-medium">Classificacao de dataset</span>
-                </div>
-                <p className="mt-3 text-2xl font-semibold text-[#1A1A1A]">{latestRun.dataset_class || '-'}</p>
-                <p className="mt-2 text-sm text-[#1A1A1A]/65">Base para organizacao do dataset local e revisao operacional.</p>
-              </CardContent>
-            </Card>
-
-            <Card className="border-l-4 border-l-amber-500">
-              <CardContent className="p-5">
-                <div className="flex items-center gap-2 text-[#1A1A1A]/70">
-                  {latestRun.quality_status === 'too_dark' ? <Moon className="h-4 w-4 text-amber-600" /> : <Sun className="h-4 w-4 text-amber-600" />}
-                  <span className="text-sm font-medium">Leitura rapida</span>
-                </div>
-                <p className="mt-3 text-sm text-[#1A1A1A]/70">
-                  Ultima captura em {formatDateTime(latestRun.executed_at)} com qualidade <strong>{getQualityLabel(latestRun.quality_status)}</strong>.
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      )}
-
-      <Card>
-        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="text-xl text-[#1A1A1A]">Capturas recentes</CardTitle>
-            <p className="text-sm text-[#1A1A1A]/65">Lista operacional das ultimas execucoes do pipeline vision.</p>
-          </div>
-          <Badge variant="outline" className="border-slate-200 bg-slate-100 text-slate-700">
-            {recentRuns.length} registros
-          </Badge>
-        </CardHeader>
-
-        <CardContent className="space-y-3 p-4 sm:p-6">
-          {recentRuns.length === 0 ? (
-            <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-[#1A1A1A]/60">
-              Nenhuma captura encontrada para os filtros selecionados.
-            </div>
-          ) : (
-            recentRuns.map((run) => {
-              const remoteStatus = getRemoteStatus(run);
-              return (
-                <div
-                  key={run.id}
-                  className="flex flex-col gap-4 rounded-2xl border bg-white p-4 lg:flex-row lg:items-center lg:justify-between"
-                >
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 xl:items-center xl:gap-4">
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.14em] text-[#1A1A1A]/45">Timestamp</p>
-                      <p className="mt-1 text-sm font-medium text-[#1A1A1A]">{formatDateTime(run.executed_at)}</p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.14em] text-[#1A1A1A]/45">Qualidade</p>
-                      <Badge variant="outline" className={cn('mt-1 border', getQualityBadgeClassName(run.quality_status))}>
-                        {getQualityLabel(run.quality_status)}
-                      </Badge>
-                    </div>
-
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.14em] text-[#1A1A1A]/45">Dataset</p>
-                      <p className="mt-1 text-sm font-medium text-[#1A1A1A]">{run.dataset_class || '-'}</p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.14em] text-[#1A1A1A]/45">Persistencia</p>
-                      <Badge variant="outline" className={cn('mt-1 border', getRemoteStatusClassName(remoteStatus))}>
-                        {getRemoteStatusLabel(remoteStatus)}
-                      </Badge>
-                    </div>
-
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.14em] text-[#1A1A1A]/45">Brilho / Nitidez</p>
-                      <p className="mt-1 text-sm font-medium text-[#1A1A1A]">
-                        {formatMetric(run.brightness_mean)} / {formatMetric(run.sharpness_score)}
-                      </p>
+                                return (
+                                  <div
+                                    key={`${detection.label}-${index}`}
+                                    className={cn('vision-overlay__box', `vision-overlay__box--${overlayTone}`)}
+                                    title={`${formatDetectionLabel(detection.label)}${confidenceLabel ? ` • ${confidenceLabel}` : ''}`}
+                                    style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}
+                                  >
+                                    <span className="vision-overlay__label">
+                                      {formatDetectionLabel(detection.label)}
+                                      {confidenceLabel ? ` • ${confidenceLabel}` : ''}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <div className="vision-capture-empty">
+                          <ImageOff className="h-8 w-8" />
+                          <p>Preview indisponível</p>
+                          {featuredRun?.preview_error ? <p className="vision-capture-empty__error">{featuredRun.preview_error}</p> : null}
+                        </div>
+                      )}
                     </div>
                   </div>
-
-                  <div className="flex flex-wrap gap-2 lg:justify-end">
-                    <Button type="button" variant="outline" onClick={() => void openRunDetails(run.id)}>
-                      Abrir detalhes
-                    </Button>
-                  </div>
                 </div>
-              );
-            })
+
+                <aside className="vision-context-card">
+                  <div className="vision-context-card__header">
+                    <div className="vision-context-card__icon">
+                      <Sparkles className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h3 className="vision-context-card__title">Assistente Contextual</h3>
+                      <p className="vision-context-card__subtitle">{getRunLotLabel(featuredRun)}</p>
+                    </div>
+                  </div>
+                  <div className="vision-context-card__list">
+                    {featuredRecommendations.map((recommendation) => (
+                      <div key={recommendation.title} className="vision-context-card__item">
+                        <p className="vision-context-card__item-title">{recommendation.title}</p>
+                        <p className="vision-context-card__item-impact">{recommendation.impact}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="vision-context-card__footer">
+                    <button type="button" className="vision-context-card__button">
+                      Aplicar ajuste
+                    </button>
+                    <button type="button" className="vision-context-card__action" onClick={() => featuredRun && openRunDetails(featuredRun.id)}>
+                      <DatabaseZap className="h-4 w-4" />
+                      Abrir em tela cheia
+                    </button>
+                  </div>
+                </aside>
+              </section>
+            </>
           )}
-        </CardContent>
-      </Card>
+        </div>
+
+        <aside className="vision-aside">
+          <div className="vision-history-card">
+            <div className="vision-history-card__header">
+              <div>
+                <h2 className="vision-history-card__title">Histórico de Capturas</h2>
+                <p className="vision-history-card__copy">{recentRuns.length} registro(s) para revisão operacional.</p>
+              </div>
+            </div>
+
+            {recentRuns.length === 0 ? (
+              <div className="vision-history-card__empty">Nenhuma captura encontrada para os filtros selecionados.</div>
+            ) : (
+              <div className="vision-history-list">
+                {recentRuns.map((run) => {
+                  const remoteStatus = getRemoteStatus(run);
+                  const detectedBlocks = getDetectedBlocksCount(run);
+
+                  return (
+                    <button
+                      key={run.id}
+                      type="button"
+                      className={cn('vision-history-item', selectedRunId === run.id && 'is-active')}
+                      onClick={() => void openRunDetails(run.id)}
+                    >
+                    <div className="vision-history-item__thumb">
+                        {run.preview_url ? (
+                          <img src={run.preview_url} alt={`Captura ${run.id}`} className="vision-history-item__image" />
+                        ) : (
+                          <ImageOff className="h-5 w-5 text-[#9ba092]" />
+                        )}
+                      </div>
+
+                      <div className="vision-history-item__body">
+                        <div className="vision-history-item__top">
+                          <span className="vision-history-item__time">{formatDateTime(run.executed_at)}</span>
+                          <span className={cn('vision-pill', getQualityBadgeClassName(run.quality_status))}>
+                            {getQualityLabel(run.quality_status)}
+                          </span>
+                        </div>
+                        <p className="vision-history-item__title">{getRunLotLabel(run)}</p>
+                        <p className="vision-history-item__meta">
+                          <Package size={13} />
+                          {detectedBlocks > 0 ? `${detectedBlocks} blocos` : '-- blocos'}
+                        </p>
+                        <p className="vision-history-item__meta">
+                          <Cloud size={13} />
+                          {getRemoteStatusLabel(remoteStatus)}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
 
       <Dialog open={Boolean(selectedRunId)} onOpenChange={(open) => {
         if (!open) {
@@ -702,33 +1143,39 @@ export function Vision() {
                       </div>
 
                       <div className="relative mx-auto w-full max-w-[760px] overflow-hidden rounded-2xl border border-[#E8E0D2] bg-black/5">
+                        {detailImageLoading ? <div className="vision-image-loader" /> : null}
                         <img
                           src={selectedRun.preview_url}
                           alt="Preview da captura vision selecionada"
-                          className="block h-auto w-full"
+                          className={cn('block h-auto w-full transition-opacity duration-300', detailImageLoading && 'opacity-0')}
                           onLoad={(event) => {
                             const target = event.currentTarget;
-                            setSelectedImageSize({
+                            setDetailImageSize({
                               width: target.naturalWidth,
                               height: target.naturalHeight,
                             });
+                            setDetailImageLoading(false);
+                          }}
+                          onError={() => {
+                            setDetailImageLoading(false);
                           }}
                         />
 
-                        {showDetectionOverlay && selectedImageSize && selectedRunDetections.length ? (
+                        {showDetectionOverlay && detailImageSize && selectedRunDetections.length ? (
                           <div className="pointer-events-none absolute inset-0">
                             {selectedRunDetections.map((detection, index) => {
                               const [x1, y1, x2, y2] = detection.bbox;
-                              const left = Math.max(0, Math.min(100, (x1 / selectedImageSize.width) * 100));
-                              const top = Math.max(0, Math.min(100, (y1 / selectedImageSize.height) * 100));
-                              const width = Math.max(0, Math.min(100, ((x2 - x1) / selectedImageSize.width) * 100));
-                              const height = Math.max(0, Math.min(100, ((y2 - y1) / selectedImageSize.height) * 100));
+                              const left = Math.max(0, Math.min(100, (x1 / detailImageSize.width) * 100));
+                              const top = Math.max(0, Math.min(100, (y1 / detailImageSize.height) * 100));
+                              const width = Math.max(0, Math.min(100, ((x2 - x1) / detailImageSize.width) * 100));
+                              const height = Math.max(0, Math.min(100, ((y2 - y1) / detailImageSize.height) * 100));
                               const confidenceLabel = formatConfidencePercent(detection.confidence);
+                              const overlayTone = getDetectionTone(detection.confidence);
 
                               return (
                                 <div
                                   key={`${detection.label}-${index}`}
-                                  className="absolute rounded-md border-2 border-[#A88F52] bg-[#A88F52]/10 shadow-[0_0_0_1px_rgba(255,255,255,0.2)]"
+                                  className={cn('vision-overlay__box', `vision-overlay__box--${overlayTone}`)}
                                   style={{
                                     left: `${left}%`,
                                     top: `${top}%`,
@@ -736,8 +1183,8 @@ export function Vision() {
                                     height: `${height}%`,
                                   }}
                                 >
-                                  <div className="absolute left-0 top-0 rounded-br-md bg-[#A88F52] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.08em] text-white">
-                                    {detection.label}
+                                  <div className="vision-overlay__label">
+                                    {formatDetectionLabel(detection.label)}
                                     {confidenceLabel ? ` • ${confidenceLabel}` : ''}
                                   </div>
                                 </div>

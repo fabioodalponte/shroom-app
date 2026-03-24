@@ -7,13 +7,16 @@ https://zgxxbguoijamtbydcxrm.supabase.co/functions/v1/make-server-5522cecf
 
 ## Autenticação
 
-Todas as rotas (exceto `/signup`) requerem autenticação via Bearer Token no header:
+Todas as rotas operacionais (exceto `/signup` e `/sensores/ingest`) requerem autenticação via Bearer Token no header:
 
 ```javascript
 Authorization: Bearer {access_token}
 ```
 
 Para obter o `access_token`, faça login usando o Supabase Auth Client no frontend.
+
+Exceção:
+- `POST /sensores/ingest` usa autenticação de ingestão por header `x-sensores-key`
 
 ---
 
@@ -226,6 +229,184 @@ Registrar colheita
 ```
 
 **Nota:** Ao criar uma colheita, o estoque é automaticamente atualizado.
+
+---
+
+## 🌡️ Sensores
+
+### POST `/sensores/ingest`
+Ingerir leitura ambiental de sensor.
+
+O caminho principal definitivo é `sala_id`.
+
+**Base URL oficial da ingestão:**
+```text
+https://zgxxbguoijamtbydcxrm.supabase.co/functions/v1/make-server-5522cecf
+```
+
+**URL final da rota:**
+```text
+https://zgxxbguoijamtbydcxrm.supabase.co/functions/v1/make-server-5522cecf/sensores/ingest
+```
+
+**Header oficial de autenticação da ingestão:**
+```http
+x-sensores-key: SUA_SENSORES_INGEST_KEY
+```
+
+Compatibilidade temporária existente no backend:
+- `key` em query string
+- `key` no body
+
+Esses formatos legados continuam aceitos hoje, mas não são o padrão oficial.
+
+**Ordem de resolução do vínculo da leitura:**
+1. `sala_id` explícito
+2. `lote_id` ou `codigo_lote` com `lote.sala_id`
+3. fallback legado por `sala` ou `codigo_sala`
+
+**Campos obrigatórios:**
+- pelo menos uma métrica válida:
+  - `temperatura`
+  - `umidade`
+  - `co2` ou `co2_ppm`
+  - `luminosidade_lux`
+
+**Campos opcionais:**
+- `sensor_id`
+- `sala_id`
+- `codigo_sala`
+- `sala`
+- `lote_id`
+- `codigo_lote`
+- `timestamp`
+- aliases aceitos para métricas:
+  - `temperature`, `temp`
+  - `humidity`, `hum`
+  - `co2_ppm`, `co2`
+  - `lux`
+
+**Regras de validação:**
+- `sala_id` deve vir em `snake_case`
+- formatos válidos:
+  - `sala_1`
+  - `sala_de_cultivo_2`
+- se `sala_id` vier inválido, o endpoint responde `400`
+- se métricas vierem presentes em formato não numérico, o endpoint responde `400`
+- se não for possível resolver a sala, o endpoint responde `400` com `code = "sensor_room_unresolved"`
+
+**Exemplo esperado para Sala 1:**
+```json
+{
+  "sensor_id": "sensor_sala_1_a",
+  "sala_id": "sala_1",
+  "temperatura": 25.4,
+  "umidade": 84.1,
+  "co2": 520,
+  "timestamp": "2026-03-23T19:00:00Z"
+}
+```
+
+**Exemplo esperado para Sala 2:**
+```json
+{
+  "sensor_id": "sensor_sala_2_a",
+  "sala_id": "sala_de_cultivo_2",
+  "temperatura": 24.8,
+  "umidade": 87.2,
+  "co2": 640,
+  "timestamp": "2026-03-23T19:00:00Z"
+}
+```
+
+**Exemplo oficial de teste manual com `curl` para Sala 2:**
+```bash
+curl -X POST "https://zgxxbguoijamtbydcxrm.supabase.co/functions/v1/make-server-5522cecf/sensores/ingest" \
+  -H "Content-Type: application/json" \
+  -H "x-sensores-key: SUA_SENSORES_INGEST_KEY" \
+  -d '{
+    "sensor_id": "sensor_sala_2_a",
+    "sala_id": "sala_de_cultivo_2",
+    "temperatura": 24.8,
+    "umidade": 87.2,
+    "co2": 640,
+    "timestamp": "2026-03-23T19:00:00Z"
+  }'
+```
+
+**Exemplo local equivalente para desenvolvimento:**
+```bash
+curl -X POST "http://localhost:3000/make-server-5522cecf/sensores/ingest" \
+  -H "Content-Type: application/json" \
+  -H "x-sensores-key: SUA_SENSORES_INGEST_KEY" \
+  -d '{
+    "sensor_id": "sensor_sala_2_a",
+    "sala_id": "sala_de_cultivo_2",
+    "temperatura": 24.8,
+    "umidade": 87.2,
+    "co2": 640,
+    "timestamp": "2026-03-23T19:00:00Z"
+  }'
+```
+
+**Response (201):**
+```json
+{
+  "success": true,
+  "leitura_id": "uuid",
+  "sensor_id": "sensor_sala_2_a",
+  "lote_id": null,
+  "sala_id": "sala_de_cultivo_2",
+  "resolution": {
+    "strategy": "explicit_sala_id",
+    "fallback_used": false
+  },
+  "received": {
+    "temperatura": 24.8,
+    "umidade": 87.2,
+    "co2": 640,
+    "luminosidade_lux": null,
+    "timestamp": "2026-03-23T19:00:00.000Z"
+  }
+}
+```
+
+**Erros estruturados possíveis:**
+
+`400 sensor_invalid_sala_id`
+```json
+{
+  "error": "sala_id inválido",
+  "code": "sensor_invalid_sala_id",
+  "details": {
+    "expected_format": "snake_case, ex: sala_1 ou sala_de_cultivo_2",
+    "received": "Sala 2"
+  }
+}
+```
+
+`400 sensor_invalid_metrics`
+```json
+{
+  "error": "Payload contém métricas inválidas",
+  "code": "sensor_invalid_metrics",
+  "details": [
+    {
+      "field": "temperatura",
+      "received": "vinte"
+    }
+  ]
+}
+```
+
+`400 sensor_room_unresolved`
+```json
+{
+  "error": "Não foi possível resolver sala_id para a leitura",
+  "code": "sensor_room_unresolved",
+  "warning": "Envie sala_id explicitamente. Fallbacks aceitos temporariamente: lote vinculado, sala, codigo_sala."
+}
+```
 
 ---
 

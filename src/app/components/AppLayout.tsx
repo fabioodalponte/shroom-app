@@ -1,18 +1,22 @@
-import { Outlet, useNavigate } from 'react-router';
-import { useEffect, useState } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Beaker,
-  Building2,
+  Bell,
   Box,
+  Building2,
   ClipboardList,
   DollarSign,
   FileText,
   GraduationCap,
+  HelpCircle,
   LayoutDashboard,
   Menu,
-  ScanSearch,
   Package,
+  Search,
+  ScanSearch,
   Scissors,
+  Settings2,
   Shield,
   ShoppingBag,
   ShoppingCart,
@@ -22,13 +26,14 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { useAuth } from '../../contexts/AuthContext';
-import { MushroomIcon } from '../../components/MushroomIcon';
 import { cn } from '../../components/ui/utils';
 import { SidebarNavigation } from './SidebarNavigation';
+import type { SidebarNavItem } from './SidebarNavigation';
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'shroom.sidebar.collapsed';
 
 export function AppLayout() {
+  const location = useLocation();
   const navigate = useNavigate();
   const { usuario, signOut } = useAuth();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -45,28 +50,55 @@ export function AppLayout() {
     return window.matchMedia('(max-width: 1280px)').matches;
   });
 
-  const navItems = [
-    { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/lotes', icon: Package, label: 'Lotes' },
-    { to: '/colheita', icon: Scissors, label: 'Colheita' },
-    { to: '/estoque', icon: Box, label: 'Estoque' },
-    { to: '/vendas', icon: ShoppingCart, label: 'Vendas' },
-    { to: '/compras', icon: ShoppingBag, label: 'Compras' },
-    { to: '/logistica', icon: Truck, label: 'Logística' },
-    { to: '/motoristas', icon: User, label: 'Motoristas' },
-    { to: '/seguranca', icon: Shield, label: 'Segurança' },
-    { to: '/vision', icon: ScanSearch, label: 'Vision' },
-    { to: '/operacao/inoculacao', icon: Beaker, label: 'Inoculação' },
-    { to: '/operacao/frutificacao', icon: Sprout, label: 'Frutificação' },
-    { to: '/treinamento', icon: GraduationCap, label: 'Treinamento' },
-    { to: '/checklists', icon: ClipboardList, label: 'Checklists' },
-    { to: '/financeiro', icon: DollarSign, label: 'Financeiro' },
+  const navItems: SidebarNavItem[] = [
+    { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', section: 'principal' },
+    { to: '/lotes', icon: Package, label: 'Lotes', section: 'principal' },
+    { to: '/colheita', icon: Scissors, label: 'Colheita', section: 'principal' },
+    { to: '/estoque', icon: Box, label: 'Estoque', section: 'principal' },
+    { to: '/vendas', icon: ShoppingCart, label: 'Vendas', section: 'principal' },
+    { to: '/compras', icon: ShoppingBag, label: 'Compras', section: 'operacoes' },
+    { to: '/logistica', icon: Truck, label: 'Logística', section: 'operacoes' },
+    { to: '/motoristas', icon: User, label: 'Motoristas', section: 'operacoes' },
+    { to: '/seguranca', icon: Shield, label: 'Segurança', section: 'operacoes' },
+    { to: '/vision', icon: ScanSearch, label: 'Vision', section: 'operacoes' },
+    { to: '/operacao/inoculacao', icon: Beaker, label: 'Inoculação', section: 'laboratorio' },
+    { to: '/operacao/frutificacao', icon: Sprout, label: 'Frutificação', section: 'laboratorio' },
+    { to: '/treinamento', icon: GraduationCap, label: 'Treinamento', section: 'laboratorio' },
+    { to: '/checklists', icon: ClipboardList, label: 'Checklists', section: 'laboratorio' },
+    { to: '/financeiro', icon: DollarSign, label: 'Financeiro', section: 'administracao' },
   ];
 
   if (usuario?.tipo_usuario === 'admin') {
-    navItems.splice(10, 0, { to: '/catalogo-cogumelos', icon: FileText, label: 'Catálogo' });
-    navItems.splice(11, 0, { to: '/salas', icon: Building2, label: 'Salas' });
+    navItems.push({ to: '/catalogo-cogumelos', icon: FileText, label: 'Catálogo', section: 'administracao' });
+    navItems.push({ to: '/salas', icon: Building2, label: 'Salas', section: 'administracao' });
   }
+
+  const pageTitle = useMemo(() => {
+    const pathname = location.pathname;
+
+    if (/^\/lotes\/[^/]+/.test(pathname)) return 'Detalhes do Lote';
+    if (pathname.startsWith('/dashboard')) return 'Dashboard';
+    if (pathname.startsWith('/lotes')) return 'Lotes';
+    if (pathname.startsWith('/colheita')) return 'Colheita';
+    if (pathname.startsWith('/estoque')) return 'Estoque';
+    if (pathname.startsWith('/vendas')) return 'Vendas';
+    if (pathname.startsWith('/compras')) return 'Compras';
+    if (pathname.startsWith('/logistica')) return 'Logística';
+    if (pathname.startsWith('/motoristas')) return 'Motoristas';
+    if (pathname.startsWith('/seguranca')) return 'Segurança';
+    if (pathname.startsWith('/vision')) return 'Vision';
+    if (pathname.startsWith('/operacao/inoculacao')) return 'Inoculação';
+    if (pathname.startsWith('/operacao/frutificacao')) return 'Frutificação';
+    if (pathname.startsWith('/treinamento')) return 'Treinamento';
+    if (pathname.startsWith('/checklists')) return 'Checklists';
+    if (pathname.startsWith('/financeiro')) return 'Financeiro';
+    if (pathname.startsWith('/catalogo-cogumelos')) return 'Catálogo';
+    if (pathname.startsWith('/salas')) return 'Salas';
+    if (pathname.startsWith('/perfil')) return 'Perfil';
+    if (pathname.startsWith('/debug')) return 'Debug & Testes';
+
+    return 'Micélio Lab';
+  }, [location.pathname]);
 
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0');
@@ -133,34 +165,64 @@ export function AppLayout() {
   } as const;
 
   return (
-    <div className="min-h-screen bg-[#F8F6F2]">
-      <header className="lg:hidden fixed top-0 left-0 right-0 z-30 bg-[#1A1A1A] text-white border-b border-[#2A2A2A]">
-        <div className="flex items-center justify-between px-4 h-16">
-          <div className="flex items-center gap-3">
-            <MushroomIcon className="w-8 h-8 text-[#A88F52]" />
-            <span className="font-['Cormorant_Garamond']" style={{ fontSize: '20px', fontWeight: 600 }}>
-              Shroom Bros
-            </span>
+    <div className={cn('lab-shell', sidebarCollapsed && 'is-collapsed')}>
+      <header className="lab-mobile-header">
+        <div>
+          <p className="lab-mobile-header__brand-title">Micélio Lab</p>
+          <p className="lab-mobile-header__brand-subtitle">Laboratório Vivo</p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setMobileSidebarOpen(true)}
+          className="lab-mobile-header__menu"
+          aria-label="Abrir menu principal"
+          aria-expanded={mobileSidebarOpen}
+          aria-controls="mobile-sidebar"
+        >
+          <Menu size={20} />
+        </button>
+      </header>
+
+      <header className="lab-topbar">
+        <div className="lab-topbar__group">
+          <div className="min-w-0">
+            <p className="lab-topbar__title">{pageTitle}</p>
           </div>
+
+          <label className="lab-topbar__search">
+            <Search size={18} />
+            <input type="search" placeholder="Buscar em laboratório..." />
+          </label>
+        </div>
+
+        <div className="lab-topbar__actions">
+          {[Bell, Settings2, HelpCircle].map((Icon, index) => (
+            <button
+              key={`${Icon.displayName || Icon.name}-${index}`}
+              type="button"
+              className="lab-topbar__icon"
+              aria-label={index === 0 ? 'Notificações' : index === 1 ? 'Configurações' : 'Ajuda'}
+            >
+              <Icon size={19} />
+            </button>
+          ))}
+
+          <div className="lab-topbar__divider" />
 
           <button
             type="button"
-            onClick={() => setMobileSidebarOpen(true)}
-            className="rounded-md p-2 hover:bg-[#2A2A2A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A88F52]/70"
-            aria-label="Abrir menu principal"
-            aria-expanded={mobileSidebarOpen}
-            aria-controls="mobile-sidebar"
+            onClick={() => navigate('/perfil')}
+            className="lab-topbar__avatar"
+            aria-label="Abrir perfil"
           >
-            <Menu size={24} />
+            <span>{usuario?.nome?.trim()?.charAt(0)?.toUpperCase() || 'U'}</span>
           </button>
         </div>
       </header>
 
       <aside
-        className={cn(
-          'hidden lg:flex fixed top-0 left-0 bottom-0 z-40 bg-[#1A1A1A] text-white transition-[width] duration-300 motion-reduce:transition-none',
-          sidebarCollapsed ? 'w-20' : 'w-64',
-        )}
+        className="lab-shell__sidebar hidden lg:flex"
         aria-label="Menu lateral"
       >
         <SidebarNavigation
@@ -178,12 +240,12 @@ export function AppLayout() {
         />
       </aside>
 
-      {isMobileViewport && mobileSidebarOpen && (
+      {isMobileViewport && mobileSidebarOpen ? (
         <>
-          <div className="fixed inset-0 z-40 bg-black/50 transition-opacity duration-200 motion-reduce:transition-none lg:hidden">
+          <div className="fixed inset-0 z-40 bg-black/40 lg:hidden">
             <button
               type="button"
-              className="w-full h-full"
+              className="h-full w-full"
               aria-label="Fechar menu"
               onClick={() => setMobileSidebarOpen(false)}
             />
@@ -194,7 +256,7 @@ export function AppLayout() {
             role="dialog"
             aria-modal="true"
             aria-label="Menu principal"
-            className="fixed top-0 left-0 bottom-0 z-50 w-[min(85vw,320px)] bg-[#1A1A1A] text-white transition-transform duration-300 motion-reduce:transition-none lg:hidden translate-x-0"
+            className="lab-mobile-sidebar lg:hidden"
           >
             <SidebarNavigation
               navItems={navItems}
@@ -212,13 +274,10 @@ export function AppLayout() {
             />
           </aside>
         </>
-      )}
+      ) : null}
 
       <main
-        className={cn(
-          'min-h-screen pt-16 lg:pt-0 transition-[margin-left] duration-300 motion-reduce:transition-none',
-          sidebarCollapsed ? 'lg:ml-20' : 'lg:ml-64',
-        )}
+        className="lab-shell__content"
       >
         <Outlet />
       </main>

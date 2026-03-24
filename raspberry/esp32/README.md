@@ -220,7 +220,11 @@ Arquivo: `sala1_mqtt_bridge.ino`
 1. `WIFI_SSID`
 2. `WIFI_PASS`
 3. `MQTT_HOST`
-4. `INGEST_URL` e `SUPABASE_ANON_KEY` (se for usar fallback HTTP)
+4. `SHROOMOS_SENSOR_ID`
+5. `SHROOMOS_SALA_ID`
+6. `INGEST_URL`
+7. `INGEST_HEADER_NAME`
+8. `SENSORES_INGEST_KEY` (se for usar fallback HTTP)
 
 ## Recomendacao operacional
 
@@ -233,3 +237,111 @@ Com o bridge MQTT->API ativo no Raspberry:
 ## Compatibilidade com o bridge
 
 O bridge aceita `temp`, `rh`, `co2` e faz normalizacao para o payload da API.
+
+## Contrato oficial de ingestao do ShroomOS
+
+O formato oficial novo usa:
+
+1. Header:
+   - `x-sensores-key: SUA_SENSORES_INGEST_KEY`
+2. Payload JSON:
+   - `sensor_id`
+   - `sala_id`
+   - metricas (`temperatura`, `umidade`, `co2`)
+
+### Payload final esperado - Sala 1
+
+```json
+{
+  "sensor_id": "sensor_sala_1_a",
+  "sala_id": "sala_1",
+  "temperatura": 25.4,
+  "umidade": 84.1,
+  "co2": 520,
+  "timestamp": "2026-03-23T19:00:00Z"
+}
+```
+
+### Payload final esperado - Sala 2
+
+```json
+{
+  "sensor_id": "sensor_sala_2_a",
+  "sala_id": "sala_de_cultivo_2",
+  "temperatura": 24.8,
+  "umidade": 87.2,
+  "co2": 640,
+  "timestamp": "2026-03-23T19:00:00Z"
+}
+```
+
+### Exemplo HTTP no formato do ESP32
+
+O firmware agora envia assim no fallback HTTP:
+
+```http
+POST /functions/v1/make-server-5522cecf/sensores/ingest
+Content-Type: application/json
+x-sensores-key: SUA_SENSORES_INGEST_KEY
+```
+
+Body:
+
+```json
+{
+  "sensor_id": "sensor_sala_2_a",
+  "sala_id": "sala_de_cultivo_2",
+  "temperatura": 24.8,
+  "umidade": 87.2,
+  "co2": 640
+}
+```
+
+### Como configurar Sala 2 no ESP32
+
+No firmware, troque:
+
+```cpp
+const char *SHROOMOS_SENSOR_ID = "sensor_sala_1_a";
+const char *SHROOMOS_SALA_ID = "sala_1";
+```
+
+por:
+
+```cpp
+const char *SHROOMOS_SENSOR_ID = "sensor_sala_2_a";
+const char *SHROOMOS_SALA_ID = "sala_de_cultivo_2";
+```
+
+### Retry e logs no Serial
+
+O fallback HTTP agora faz:
+
+1. ate 3 tentativas
+2. delay de 1500 ms entre retries
+3. logs simples no Serial:
+   - sala enviada
+   - payload enviado
+   - status HTTP
+   - resposta do backend
+   - sucesso final ou falha final
+
+### Como testar no ESP32
+
+1. Grave o firmware com:
+   - `ENABLE_HTTP_FALLBACK 1`
+   - `SHROOMOS_SENSOR_ID` correto
+   - `SHROOMOS_SALA_ID` correto
+   - `INGEST_URL` apontando para Supabase
+   - `SENSORES_INGEST_KEY` correta
+2. Abra o Serial Monitor em `115200`
+3. Confirme logs como:
+   - `[HTTP] Enviando leitura para sala_de_cultivo_2`
+   - `[HTTP] Status: 201`
+   - `[HTTP] Ingest OK para sensor=sensor_sala_2_a sala_id=sala_de_cultivo_2`
+
+Se preferir manter o fluxo atual do ambiente:
+
+1. deixe `ENABLE_HTTP_FALLBACK 0`
+2. publique em MQTT normalmente
+3. o Raspberry bridge continua fazendo a normalizacao e envio para a API
