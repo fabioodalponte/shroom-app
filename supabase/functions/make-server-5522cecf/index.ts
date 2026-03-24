@@ -640,7 +640,7 @@ app.get("/make-server-5522cecf/sensores/latest", async (c) => {
         historicoDiretoPorLote.get(leitura.lote_id)!.push(sample);
       }
 
-      const salaKey = db.resolveSalaId(leitura.sala_id ?? leitura.lote?.sala);
+      const salaKey = db.resolveSalaId(leitura.sala_id ?? leitura.lote?.sala_id ?? leitura.lote?.sala);
       if (salaKey) {
         if (!historicoPorSala.has(salaKey)) {
           historicoPorSala.set(salaKey, []);
@@ -651,7 +651,7 @@ app.get("/make-server-5522cecf/sensores/latest", async (c) => {
 
     const sensoresPorLote = lotesMonitorados
       .map((item) => {
-        const salaKey = db.resolveSalaId(item.sala);
+        const salaKey = db.resolveSalaId(item.sala_id ?? item.sala_ref?.id ?? item.sala_ref?.codigo ?? item.sala);
         const historicoBase =
           (salaKey ? historicoPorSala.get(salaKey) : undefined) ||
           historicoDiretoPorLote.get(item.id) ||
@@ -685,8 +685,9 @@ app.get("/make-server-5522cecf/sensores/latest", async (c) => {
         return {
           id: item.id,
           codigo_lote: item.codigo_lote,
-          sala: item.sala,
-          sala_id: salaKey,
+          sala: item.sala || item.sala_ref?.nome || 'Sala não informada',
+          sala_id: salaKey || item.sala_id || item.sala_ref?.id || null,
+          sala_ref: item.sala_ref || null,
           fase_operacional: item.fase_operacional || item.fase_atual || null,
           data_inoculacao: item.data_inoculacao || null,
           data_prevista_fim_incubacao: item.data_prevista_fim_incubacao || null,

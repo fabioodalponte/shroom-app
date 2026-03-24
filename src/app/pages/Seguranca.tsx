@@ -47,6 +47,12 @@ interface LoteMonitoramento {
   id: string;
   codigo_lote: string;
   sala: string;
+  sala_id?: string | null;
+  sala_ref?: {
+    id?: string | null;
+    codigo?: string | null;
+    nome?: string | null;
+  } | null;
   fase_operacional?: string | null;
   data_inoculacao?: string | null;
   data_prevista_fim_incubacao?: string | null;
@@ -154,7 +160,8 @@ interface MetricIssue {
 }
 
 interface SalaOperacionalCard {
-  sala: string;
+  salaId: string;
+  salaLabel: string;
   primaryLote: LoteMonitoramento;
   lotes: LoteMonitoramento[];
   status: 'critical' | 'warning' | 'ok';
@@ -224,6 +231,24 @@ function normalizeText(value: string) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+}
+
+function normalizeSalaId(value?: string | null) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized || null;
+}
+
+function resolveLoteSalaId(lote: Pick<LoteMonitoramento, 'sala_id' | 'sala_ref' | 'sala'>) {
+  return (
+    normalizeSalaId(lote.sala_id) ||
+    normalizeSalaId(lote.sala_ref?.id) ||
+    normalizeSalaId(lote.sala_ref?.codigo) ||
+    (normalizeText(lote.sala || '').replace(/\s+/g, '_') || null)
+  );
+}
+
+function resolveLoteSalaLabel(lote: Pick<LoteMonitoramento, 'sala_ref' | 'sala'>) {
+  return lote.sala_ref?.nome || lote.sala || 'Sem sala';
 }
 
 function scoreCameraStreamUrl(url?: string | null) {
@@ -731,13 +756,18 @@ export function Seguranca() {
     );
     const universoBusca = baseComStream.length ? baseComStream : base;
 
-    const sala = normalizeText(lote.sala || '');
+    const salaId = resolveLoteSalaId(lote);
+    const salaLabel = resolveLoteSalaLabel(lote);
+    const sala = normalizeText(salaLabel);
     const codigo = normalizeText(lote.codigo_lote || '');
 
     const encontrada = universoBusca.find((camera) => {
       const nome = normalizeText(camera.nome || '');
       const localizacao = normalizeText(camera.localizacao || '');
+      const localizacaoId = localizacao.replace(/\s+/g, '_');
 
+      const matchSalaId =
+        !!salaId && (localizacaoId.includes(salaId) || nome.includes(salaId));
       const matchSala =
         !!sala &&
         (nome.includes(sala) ||
@@ -747,7 +777,7 @@ export function Seguranca() {
 
       const matchCodigo = !!codigo && (nome.includes(codigo) || localizacao.includes(codigo));
 
-      return matchSala || matchCodigo;
+      return matchSalaId || matchSala || matchCodigo;
     });
 
     if (encontrada && hasCameraStream(encontrada)) return encontrada;
@@ -769,13 +799,18 @@ export function Seguranca() {
     );
     const base = controladoresAtivos.length ? controladoresAtivos : controladoresSala;
 
-    const sala = normalizeText(lote.sala || '');
+    const salaId = resolveLoteSalaId(lote);
+    const salaLabel = resolveLoteSalaLabel(lote);
+    const sala = normalizeText(salaLabel);
     const codigo = normalizeText(lote.codigo_lote || '');
 
     const encontrado = base.find((controlador) => {
       const nome = normalizeText(controlador.nome || '');
       const localizacao = normalizeText(controlador.localizacao || '');
+      const localizacaoId = localizacao.replace(/\s+/g, '_');
 
+      const matchSalaId =
+        !!salaId && (localizacaoId.includes(salaId) || nome.includes(salaId));
       const matchSala =
         !!sala &&
         (nome.includes(sala) ||
@@ -784,7 +819,7 @@ export function Seguranca() {
           sala.includes(localizacao));
 
       const matchCodigo = !!codigo && (nome.includes(codigo) || localizacao.includes(codigo));
-      return matchSala || matchCodigo;
+      return matchSalaId || matchSala || matchCodigo;
     });
 
     return encontrado || base[0] || null;
@@ -1195,32 +1230,21 @@ export function Seguranca() {
   const mediaCo2 = lotes.length > 0 ? lotes.reduce((acc, l) => acc + l.sensor_atual.co2, 0) / lotes.length : 0;
   const lotesAlerta = lotes.filter(l => l.score_risco >= 70).length;
   const lotesAtencao = lotes.filter(l => l.score_risco >= 30 && l.score_risco < 70).length;
-  const lotesPorSala = useMemo(() => {
-    const map = new Map<string, LoteMonitoramento[]>();
-
-    for (const lote of lotes) {
-      const sala = lote.sala || 'Sem sala';
-      const existing = map.get(sala) || [];
-      existing.push(lote);
-      map.set(sala, existing);
-    }
-
-    return map;
-  }, [lotes]);
   const salasOperacionais = useMemo<SalaOperacionalCard[]>(() => {
     const grouped = new Map<string, LoteMonitoramento[]>();
 
     for (const lote of lotesFiltrados) {
-      const sala = lote.sala || 'Sem sala';
-      const existing = grouped.get(sala) || [];
+      const salaId = resolveLoteSalaId(lote) || 'sem_sala';
+      const existing = grouped.get(salaId) || [];
       existing.push(lote);
-      grouped.set(sala, existing);
+      grouped.set(salaId, existing);
     }
 
     return Array.from(grouped.entries())
-      .map(([sala, lotesSala]) => {
+      .map(([salaId, lotesSala]) => {
         const orderedLotes = [...lotesSala].sort((a, b) => b.score_risco - a.score_risco);
         const primaryLote = orderedLotes[0];
+        const salaLabel = resolveLoteSalaLabel(primaryLote);
         const primaryBounds = {
           tempMin: primaryLote.limites_operacionais?.temperatura_min ?? 20,
           tempMax: primaryLote.limites_operacionais?.temperatura_max ?? 25,
@@ -1259,7 +1283,8 @@ export function Seguranca() {
         const avgCo2 = orderedLotes.reduce((sum, item) => sum + item.sensor_atual.co2, 0) / orderedLotes.length;
 
         return {
-          sala,
+          salaId,
+          salaLabel,
           primaryLote,
           lotes: orderedLotes,
           status: status.status,
@@ -1324,7 +1349,7 @@ export function Seguranca() {
       .filter((item) => item.topIssue)
       .slice(0, 2)
       .map((item) => ({
-        sala: item.sala,
+        sala: item.salaLabel,
         prioridade: item.status === 'critical' ? 'Alta prioridade' : 'Média prioridade',
         timing: item.alertElapsed || 'Agora',
         title: item.actionLabel,
@@ -1342,9 +1367,9 @@ export function Seguranca() {
 
     return {
       headline: salaCritica
-        ? `A estabilidade da ${salaCritica.sala} é a principal variável de risco produtivo nas próximas horas.`
+        ? `A estabilidade da ${salaCritica.salaLabel} é a principal variável de risco produtivo nas próximas horas.`
         : 'O ambiente geral segue estável, com risco produtivo distribuído em níveis controlados.',
-      emphasis: salaCritica?.sala || null,
+      emphasis: salaCritica?.salaLabel || null,
       blocosFrutificando,
       eficiencia: Math.max(0, Math.min(100, eficienciaBase)),
     };
@@ -1681,7 +1706,7 @@ export function Seguranca() {
                 <SelectItem value="todos">Todos os Lotes</SelectItem>
                 {lotes.map((lote) => (
                   <SelectItem key={lote.id} value={lote.id}>
-                    {lote.codigo_lote} - {lote.sala}
+                    {lote.codigo_lote} - {resolveLoteSalaLabel(lote)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1743,10 +1768,10 @@ export function Seguranca() {
             const Co2TrendIcon = sala.trends.co2.icon;
 
             return (
-              <article key={sala.sala} className={`security-room-card security-room-card--${sala.status}`}>
+              <article key={sala.salaId} className={`security-room-card security-room-card--${sala.status}`}>
                 <header className="security-room-card__header">
                   <div className="security-room-card__header-main">
-                    <h3 className="security-room-card__name">{sala.sala}</h3>
+                    <h3 className="security-room-card__name">{sala.salaLabel}</h3>
                     <div className="security-room-card__badges">
                       <span className={`security-room-card__status security-room-card__status--${sala.status}`}>
                         {sala.statusLabel}
@@ -1836,7 +1861,7 @@ export function Seguranca() {
                 <div className={`security-room-card__spark security-room-card__spark--${sala.status}`}>
                   {sala.sparkValues.map((value, index) => (
                     <span
-                      key={`${sala.sala}-${index}`}
+                      key={`${sala.salaId}-${index}`}
                       className="security-room-card__spark-bar"
                       style={{ height: `${Math.max(16, value)}px` }}
                     />
@@ -1976,10 +2001,10 @@ export function Seguranca() {
 
         <Accordion type="multiple" className="security-details__list">
           {visibleSalas.map((sala) => (
-            <AccordionItem key={`tech-${sala.sala}`} value={`tech-${sala.sala}`} className="security-details__item">
+            <AccordionItem key={`tech-${sala.salaId}`} value={`tech-${sala.salaId}`} className="security-details__item">
               <AccordionTrigger className="security-details__trigger">
                 <div className="security-details__trigger-copy">
-                  <p className="security-details__trigger-title">{sala.sala}</p>
+                  <p className="security-details__trigger-title">{sala.salaLabel}</p>
                   <p className="security-details__trigger-subtitle">
                     Lote de referência: {sala.primaryLote.codigo_lote} • {sala.statusLabel}
                   </p>

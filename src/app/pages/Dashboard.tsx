@@ -20,6 +20,13 @@ interface DashboardLote {
   codigo_lote: string;
   status?: string | null;
   sala?: string | null;
+  sala_id?: string | null;
+  sala_ref?: {
+    id?: string | null;
+    codigo?: string | null;
+    nome?: string | null;
+    ativa?: boolean | null;
+  } | null;
   temperatura_atual?: number | null;
   umidade_atual?: number | null;
   fase_operacional?: string | null;
@@ -38,6 +45,13 @@ interface DashboardLote {
 
 interface DashboardSensorMonitoramento {
   id: string;
+  sala_id?: string | null;
+  sala_ref?: {
+    id?: string | null;
+    codigo?: string | null;
+    nome?: string | null;
+    ativa?: boolean | null;
+  } | null;
   score_risco: number;
   alertas: string[];
   sensor_atual: {
@@ -63,9 +77,17 @@ interface DashboardColheita {
   quantidade_kg?: string | number | null;
   lote_id?: string | null;
   lote?: {
-    codigo_lote?: string | null;
-    sala?: string | null;
-  } | null;
+      codigo_lote?: string | null;
+      sala?: string | null;
+      sala_id?: string | null;
+    } | null;
+}
+
+interface DashboardSala {
+  id: string;
+  codigo?: string | null;
+  nome?: string | null;
+  ativa?: boolean | null;
 }
 
 interface DashboardEstoque {
@@ -96,6 +118,8 @@ interface DashboardIssue {
 }
 
 interface DashboardOperationalLote extends DashboardLote {
+  resolvedSalaId: string | null;
+  resolvedSalaLabel: string;
   scoreRisco: number;
   alertas: string[];
   temperatura: number | null;
@@ -112,7 +136,8 @@ interface DashboardOperationalLote extends DashboardLote {
 }
 
 interface DashboardRoomCard {
-  sala: string;
+  salaId: string;
+  salaLabel: string;
   status: DashboardStatus;
   statusLabel: string;
   phaseLabel: string;
@@ -244,6 +269,49 @@ function getVisionAnomalyLabel(run?: VisionRun | null) {
   return 'Última análise sem anomalia relevante.';
 }
 
+function normalizeSalaId(value?: string | null) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || null;
+}
+
+function normalizeSalaAlias(value?: string | null) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function getKnownSalaAliases(sala: DashboardSala) {
+  const aliases = new Set<string>();
+  const id = normalizeSalaId(sala.id);
+  const codigo = normalizeSalaId(sala.codigo || null);
+  const nomeAlias = normalizeSalaAlias(sala.nome || null);
+
+  if (id) aliases.add(normalizeSalaAlias(id));
+  if (codigo) aliases.add(normalizeSalaAlias(codigo));
+  if (nomeAlias) aliases.add(nomeAlias);
+
+  if (id === 'sala_1') {
+    ['sala1', 'salaa', 'saladecultivo1', 'sala_1', 'sala a', 'sala 1'].forEach((value) => {
+      aliases.add(normalizeSalaAlias(value));
+    });
+  }
+
+  if (id === 'sala_de_cultivo_2') {
+    ['sala2', 'saladecultivo2', 'sala_2', 'sala 2'].forEach((value) => {
+      aliases.add(normalizeSalaAlias(value));
+    });
+  }
+
+  return aliases;
+}
+
 function getPrimaryIssue(
   lote: DashboardLote,
   sensor?: DashboardSensorMonitoramento | null,
@@ -323,6 +391,7 @@ function getPrimaryIssue(
 export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [salas, setSalas] = useState<DashboardSala[]>([]);
   const [lotes, setLotes] = useState<DashboardLote[]>([]);
   const [sensores, setSensores] = useState<DashboardSensorMonitoramento[]>([]);
   const [colheitas, setColheitas] = useState<DashboardColheita[]>([]);
@@ -337,18 +406,21 @@ export function Dashboard() {
 
         const [
           lotesResponse,
+          salasResponse,
           sensoresResponse,
           colheitasResponse,
           estoqueResponse,
           latestVisionResponse,
         ] = await Promise.all([
           fetchServer('/lotes'),
+          fetchServer('/salas?ativa=true'),
           fetchServer('/sensores/latest?hours=24'),
           fetchServer('/colheitas'),
           fetchServer('/estoque'),
           fetchServer('/vision/runs/latest'),
         ]);
 
+        setSalas((salasResponse?.salas || []) as DashboardSala[]);
         setLotes((lotesResponse?.lotes || []) as DashboardLote[]);
         setSensores((sensoresResponse?.sensores || []) as DashboardSensorMonitoramento[]);
         setColheitas((colheitasResponse?.colheitas || []) as DashboardColheita[]);
@@ -361,6 +433,7 @@ export function Dashboard() {
       } catch (error: any) {
         console.error('Erro ao carregar dashboard:', error);
         setErrorMessage(error?.message || 'Erro ao carregar dados do dashboard.');
+        setSalas([]);
         setLotes([]);
         setSensores([]);
         setColheitas([]);
@@ -377,6 +450,71 @@ export function Dashboard() {
   const sensoresPorLote = useMemo(() => {
     return new Map<string, DashboardSensorMonitoramento>(sensores.map((sensor) => [sensor.id, sensor]));
   }, [sensores]);
+
+  const officialSalas = useMemo(() => {
+    return salas.filter((sala) => sala.ativa !== false);
+  }, [salas]);
+
+  const salaAliasToOfficialId = useMemo(() => {
+    const aliases = new Map<string, string>();
+
+    for (const sala of officialSalas) {
+      for (const alias of getKnownSalaAliases(sala)) {
+        aliases.set(alias, sala.id);
+      }
+    }
+
+    return aliases;
+  }, [officialSalas]);
+
+  const officialSalaById = useMemo(() => {
+    return new Map<string, DashboardSala>(
+      officialSalas.map((sala) => [normalizeSalaId(sala.id) || sala.id, sala]),
+    );
+  }, [officialSalas]);
+
+  const resolveOfficialSalaId = useMemo(() => {
+    return (input: {
+      sala_id?: string | null;
+      sala_ref?: { id?: string | null; codigo?: string | null; nome?: string | null } | null;
+      sala?: string | null;
+    }) => {
+      const explicitCandidates = [
+        normalizeSalaId(input.sala_id),
+        normalizeSalaId(input.sala_ref?.id),
+        normalizeSalaId(input.sala_ref?.codigo),
+      ].filter(Boolean) as string[];
+
+      for (const candidate of explicitCandidates) {
+        if (officialSalaById.has(candidate)) return candidate;
+      }
+
+      const aliasCandidates = [
+        normalizeSalaAlias(input.sala_ref?.nome || null),
+        normalizeSalaAlias(input.sala || null),
+        ...explicitCandidates.map((candidate) => normalizeSalaAlias(candidate)),
+      ].filter(Boolean) as string[];
+
+      for (const alias of aliasCandidates) {
+        const resolved = salaAliasToOfficialId.get(alias);
+        if (resolved) return resolved;
+      }
+
+      return explicitCandidates[0] || null;
+    };
+  }, [officialSalaById, salaAliasToOfficialId]);
+
+  const getSalaLabel = useMemo(() => {
+    return (input: {
+      sala_id?: string | null;
+      sala_ref?: { id?: string | null; codigo?: string | null; nome?: string | null } | null;
+      sala?: string | null;
+    }) => {
+      const resolvedId = resolveOfficialSalaId(input);
+      const official = resolvedId ? officialSalaById.get(resolvedId) : null;
+      return official?.nome || input.sala_ref?.nome || input.sala || 'Sala não informada';
+    };
+  }, [officialSalaById, resolveOfficialSalaId]);
 
   const operationalLotes = useMemo<DashboardOperationalLote[]>(() => {
     return lotes.map((lote) => {
@@ -405,6 +543,8 @@ export function Dashboard() {
 
       return {
         ...lote,
+        resolvedSalaId: resolveOfficialSalaId(lote),
+        resolvedSalaLabel: getSalaLabel(lote),
         scoreRisco,
         alertas: sensor?.alertas || [],
         temperatura,
@@ -416,20 +556,21 @@ export function Dashboard() {
         nextEvent,
       };
     });
-  }, [lotes, sensoresPorLote]);
+  }, [getSalaLabel, lotes, resolveOfficialSalaId, sensoresPorLote]);
 
   const roomCards = useMemo<DashboardRoomCard[]>(() => {
     const grouped = new Map<string, DashboardOperationalLote[]>();
 
     for (const lote of operationalLotes) {
-      const sala = lote.sala || 'Sala não informada';
-      const current = grouped.get(sala) || [];
+      const salaId = lote.resolvedSalaId;
+      if (!salaId || !officialSalaById.has(salaId)) continue;
+      const current = grouped.get(salaId) || [];
       current.push(lote);
-      grouped.set(sala, current);
+      grouped.set(salaId, current);
     }
 
     return Array.from(grouped.entries())
-      .map(([sala, roomLotes]) => {
+      .map(([salaId, roomLotes]) => {
         const ordered = [...roomLotes].sort((a, b) => b.scoreRisco - a.scoreRisco);
         const topLote = ordered[0];
         const issue = topLote.primaryIssue;
@@ -449,7 +590,8 @@ export function Dashboard() {
               : { value: issue?.metricValue || `${(topLote.temperatura ?? 0).toFixed(1)}°C`, icon: Thermometer };
 
         return {
-          sala,
+          salaId,
+          salaLabel: officialSalaById.get(salaId)?.nome || topLote.resolvedSalaLabel,
           status,
           statusLabel: status === 'critical' ? 'Crítico' : status === 'warning' ? 'Atenção' : 'OK',
           phaseLabel: topLote.faseLabel,
@@ -464,7 +606,7 @@ export function Dashboard() {
         const rank = { critical: 2, warning: 1, ok: 0 };
         return rank[b.status] - rank[a.status];
       });
-  }, [operationalLotes]);
+  }, [officialSalaById, operationalLotes]);
 
   const featuredCriticalRooms = useMemo(() => {
     const visible = roomCards.filter((room) => room.status !== 'ok');
@@ -491,7 +633,7 @@ export function Dashboard() {
 
   const priorityActions = useMemo<DashboardActionItem[]>(() => {
     const actions: DashboardActionItem[] = featuredCriticalRooms.map((room) => ({
-      title: `${room.actionLabel} na ${room.sala}`,
+      title: `${room.actionLabel} na ${room.salaLabel}`,
       context: room.issue?.context || `${room.impactLots} lote(s) sob monitoramento nesta sala.`,
       tone: room.status,
       href: room.actionHref,
@@ -578,11 +720,12 @@ export function Dashboard() {
 
   const events = useMemo<DashboardEventItem[]>(() => {
     const upcomingFromLotes = operationalLotes
+      .filter((lote) => Boolean(lote.resolvedSalaId))
       .filter((lote) => lote.nextEvent)
       .map((lote) => ({
         key: `${lote.id}-${lote.nextEvent?.type}`,
         title: lote.nextEvent?.type === 'colheita' ? `Colheita ${lote.produto?.nome || lote.codigo_lote}` : 'Fim incubação',
-        subtitle: `${lote.sala || 'Sala não informada'} • ${lote.codigo_lote}`,
+        subtitle: `${lote.resolvedSalaLabel} • ${lote.codigo_lote}`,
         when: formatRelativeEvent(lote.nextEvent?.date || null),
         href: `/lotes/${lote.id}`,
         date: lote.nextEvent?.date || new Date(8640000000000000),
@@ -595,7 +738,7 @@ export function Dashboard() {
         return {
           key: `colheita-${item.id || item.lote_id || date.toISOString()}`,
           title: item.lote?.codigo_lote ? `Colheita ${item.lote.codigo_lote}` : 'Colheita registrada',
-          subtitle: item.lote?.sala || 'Registro operacional',
+          subtitle: getSalaLabel({ sala_id: item.lote?.sala_id, sala: item.lote?.sala }) || 'Registro operacional',
           when: format(date, 'HH:mm'),
           href: '/colheita',
           date,
@@ -607,7 +750,7 @@ export function Dashboard() {
       .sort((a, b) => a.date.getTime() - b.date.getTime())
       .slice(0, 5)
       .map(({ date: _date, ...item }) => item);
-  }, [colheitas, operationalLotes]);
+  }, [colheitas, getSalaLabel, operationalLotes]);
 
   if (loading) {
     return (
@@ -656,10 +799,10 @@ export function Dashboard() {
               {featuredCriticalRooms.length > 0 ? featuredCriticalRooms.map((room) => {
                 const MetricIcon = room.primaryMetric.icon;
                 return (
-                  <article key={room.sala} className={`dashboard-room-card dashboard-room-card--${room.status}`}>
+                  <article key={room.salaId} className={`dashboard-room-card dashboard-room-card--${room.status}`}>
                     <div className="dashboard-room-card__header">
                       <div>
-                        <h3 className="dashboard-room-card__title">{room.sala}</h3>
+                        <h3 className="dashboard-room-card__title">{room.salaLabel}</h3>
                         <p className="dashboard-room-card__phase">{room.phaseLabel}</p>
                       </div>
                       <span className={`dashboard-room-card__badge dashboard-room-card__badge--${room.status}`}>
