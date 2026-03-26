@@ -2181,6 +2181,23 @@ function getVisionRunDetectorError(run: any) {
   );
 }
 
+function getVisionRunModelPath(run: any) {
+  return (
+    run?.raw_result_json?.block_detection?.model_path ||
+    run?.raw_result_json?.block_detection?.model ||
+    run?.summary_json?.model_path ||
+    null
+  );
+}
+
+function getVisionRunModelVersion(run: any) {
+  return (
+    run?.raw_result_json?.block_detection?.model_version ||
+    run?.summary_json?.model_version ||
+    null
+  );
+}
+
 function sortVisionRunsByTimestampDesc(runs: any[]) {
   return [...runs].sort((a, b) => {
     const aDate = new Date(getVisionRunTimestamp(a) || 0).getTime();
@@ -2551,6 +2568,8 @@ export async function getVisionLatestBlockAnalysisByLoteId(loteId: string) {
   const blocosDetectados = selectedRun ? getVisionRunBlockCount(selectedRun, detections) : null;
   const blockCountSource = selectedRun ? getVisionRunBlockCountSource(selectedRun) : null;
   const detectorError = selectedRun ? getVisionRunDetectorError(selectedRun) : null;
+  const modelPath = selectedRun ? getVisionRunModelPath(selectedRun) : null;
+  const modelVersion = selectedRun ? getVisionRunModelVersion(selectedRun) : null;
   const confiancaMedia =
     selectedRun?.summary_json?.confianca_media_blocos ??
     selectedRun?.raw_result_json?.summary?.confianca_media_blocos ??
@@ -2582,6 +2601,8 @@ export async function getVisionLatestBlockAnalysisByLoteId(loteId: string) {
     selected_run_block_count_source: blockCountSource,
     selected_run_has_detections: detections.length > 0,
     selected_run_detector_error: detectorError,
+    selected_run_model_path: modelPath,
+    selected_run_model_version: modelVersion,
     matched_cameras_count: matchedCameras.length,
   });
 
@@ -2603,8 +2624,12 @@ export async function getVisionLatestBlockAnalysisByLoteId(loteId: string) {
       camera_fallback_runs_count: cameraFallbackRuns.length,
       block_count_source: blockCountSource,
       detector_error: detectorError,
+      model_path: modelPath,
+      model_version: modelVersion,
       matched_cameras_count: matchedCameras.length,
     },
+    model_path: modelPath,
+    model_version: modelVersion,
     blocos_detectados: blocosDetectados,
     quantidade_esperada: expectedBlockCount.quantidadeEsperada,
     quantidade_esperada_origem: expectedBlockCount.origem,

@@ -20,13 +20,13 @@ from vision.training.dataset_utils import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Prepare the first YOLO dataset for block detection")
+    parser = argparse.ArgumentParser(description="Prepare a YOLO dataset for block detection")
     parser.add_argument("--annotations-root", default="vision/dataset/annotations/block_detector_v1", help="Root folder with images/ and labels/")
     parser.add_argument("--dataset-root", default="vision/dataset", help="Target dataset root with train/ and val/")
     parser.add_argument("--val-ratio", type=float, default=0.2, help="Validation split ratio")
     parser.add_argument("--link-mode", choices=["hardlink_or_copy", "copy", "symlink"], default="hardlink_or_copy", help="How to materialize files into train/val")
     parser.add_argument("--clean", action="store_true", help="Remove previous train/val files before preparing the split")
-    parser.add_argument("--manifest-path", default="vision/dataset/annotations/block_detector_v1/split_manifest.json", help="Path to the generated split manifest")
+    parser.add_argument("--manifest-path", default="", help="Path to the generated split manifest, defaults to <annotations-root>/split_manifest.json")
     return parser
 
 
@@ -40,7 +40,7 @@ def main() -> int:
     train_labels_dir = dataset_root / "train" / "labels"
     val_images_dir = dataset_root / "val" / "images"
     val_labels_dir = dataset_root / "val" / "labels"
-    manifest_path = Path(args.manifest_path)
+    manifest_path = Path(args.manifest_path) if args.manifest_path else (annotations_root / "split_manifest.json")
 
     issues = collect_dataset_issues(images_dir, labels_dir, allow_missing_labels=False)
     if not issues["ok"]:

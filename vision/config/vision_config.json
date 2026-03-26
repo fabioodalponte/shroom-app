@@ -27,7 +27,9 @@
   "inference": {
     "enabled": true,
     "mode": "yolov8",
-    "model": "vision/models/block_detector.pt",
+    "model_path": "vision/models/block_detector_v2.pt",
+    "fallback_model_path": "vision/models/block_detector.pt",
+    "model": "vision/models/block_detector_v2.pt",
     "device": "cpu",
     "isolate_process": true,
     "subprocess_timeout_seconds": 90,

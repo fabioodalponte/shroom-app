@@ -100,6 +100,58 @@ function buildChartData(room: RoomOperationalModel | null) {
     });
 }
 
+function buildHistoryBars(room: RoomOperationalModel | null, metric: 'temperatura' | 'umidade' | 'co2') {
+  if (!room?.history?.length) return [];
+
+  const points = room.history
+    .map((sample) => sample[metric])
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+
+  if (!points.length) return [];
+
+  const buckets = Math.min(7, points.length);
+  const bucketSize = Math.max(1, Math.floor(points.length / buckets));
+  const series = Array.from({ length: buckets }, (_, index) => {
+    const start = index * bucketSize;
+    const end = index === buckets - 1 ? points.length : start + bucketSize;
+    const slice = points.slice(start, end);
+    const value = slice.reduce((sum, item) => sum + item, 0) / slice.length;
+    return Number.isFinite(value) ? value : 0;
+  });
+
+  const min = Math.min(...series);
+  const max = Math.max(...series);
+  return series.map((value) => ({
+    value,
+    height: max === min ? 60 : 28 + ((value - min) / (max - min || 1)) * 52,
+  }));
+}
+
+function buildRoomInsight(room: RoomOperationalModel) {
+  if (room.primaryAlert) {
+    return {
+      title: `Prioridade atual: ${room.primaryAlert.title}`,
+      copy: room.primaryAlert.description,
+      meta: `${room.lotesAtivos} lote(s) ativos • ${room.sensoresOnline}/${room.sensores.length} sensores online`,
+    };
+  }
+
+  const activeRule = room.rules.find((rule) => rule.active);
+  if (activeRule) {
+    return {
+      title: activeRule.title,
+      copy: activeRule.description,
+      meta: `${room.atuadores.length} atuador(es) disponíveis • fase dominante: ${room.lotContext.primaryPhase || 'sem fase'}`,
+    };
+  }
+
+  return {
+    title: 'Sala operando de forma estável',
+    copy: 'Sem alertas prioritários no momento. As médias ambientais e a coerência entre sensores sustentam a automação da sala.',
+    meta: `${room.lotesAtivos} lote(s) ativos • ${room.atuadores.length} atuador(es) vinculados`,
+  };
+}
+
 export function SalaDetails() {
   const { id } = useParams();
   const [salas, setSalas] = useState<SalaRecord[]>([]);
@@ -178,6 +230,9 @@ export function SalaDetails() {
     }) || null;
   }, [id, rooms]);
   const chartData = useMemo(() => buildChartData(room), [room]);
+  const roomInsight = useMemo(() => (room ? buildRoomInsight(room) : null), [room]);
+  const temperatureBars = useMemo(() => buildHistoryBars(room, 'temperatura'), [room]);
+  const humidityBars = useMemo(() => buildHistoryBars(room, 'umidade'), [room]);
 
   useEffect(() => {
     if (!isRoomLinkDebugEnabled()) return;
@@ -240,6 +295,7 @@ export function SalaDetails() {
 
   const offlineSensors = room.sensores.length - room.sensoresOnline;
   const activeRules = room.rules.filter((rule) => rule.active).length;
+  const highlightedLot = room.lotContext.highlightedLotCode || room.lotes[0]?.codigo_lote || 'Sem lote ativo';
 
   return (
     <div className="room-detail-page">
@@ -248,9 +304,17 @@ export function SalaDetails() {
           <ArrowLeft className="h-4 w-4" />
           Voltar para salas
         </Link>
-        <Button variant="outline" onClick={() => void loadData()}>
-          Atualizar leitura
-        </Button>
+        <div className="room-detail-back-row__actions">
+          {room.lotesAtivos > 0 ? (
+            <Link to="/lotes" className="room-detail-back room-detail-back--secondary">
+              <Boxes className="h-4 w-4" />
+              Ver lotes
+            </Link>
+          ) : null}
+          <Button variant="outline" onClick={() => void loadData()}>
+            Atualizar leitura
+          </Button>
+        </div>
       </div>
 
       <section className={`room-detail-hero room-detail-hero--${room.status}`}>
@@ -260,14 +324,16 @@ export function SalaDetails() {
           <div className="room-detail-hero__chips">
             <span className={`room-status-chip room-status-chip--${room.status}`}>{room.statusLabel}</span>
             <span className="room-status-chip room-status-chip--ghost">{getRoomTypeLabel(room.sala.tipo)}</span>
-            <span className="room-status-chip room-status-chip--ghost">{room.sala.codigo}</span>
-            <span className={`room-status-chip ${room.sala.ativa !== false ? 'room-status-chip--ok' : 'room-status-chip--inactive'}`}>
-              {room.sala.ativa !== false ? 'Ativa' : 'Inativa'}
-            </span>
+            {room.lotContext.primaryPhase ? <span className="room-status-chip room-status-chip--ghost">{room.lotContext.primaryPhase}</span> : null}
           </div>
           <p className="room-detail-hero__description">
             {room.sala.descricao || 'Sala estruturada para monitoramento ambiental, automação e operação por média consolidada.'}
           </p>
+          <div className="room-detail-hero__context">
+            <span>{getRoomTypeLabel(room.sala.tipo)}</span>
+            <span>{room.lotContext.primaryPhase || 'Sem fase dominante'}</span>
+            <span>{highlightedLot}</span>
+          </div>
         </div>
 
         <div className="room-detail-hero__stats">
@@ -294,46 +360,92 @@ export function SalaDetails() {
         </div>
       </section>
 
-      <section className="room-detail-summary-grid">
-        <article className="room-detail-summary-card">
-          <span>Temperatura média</span>
-          <strong>
-            <Thermometer className="h-4 w-4" />
-            {formatMetric(room.mediaTemperatura, '°C', 1)}
-          </strong>
-          <p>Automação e alertas calculados pela média da sala.</p>
+      <section className="room-detail-overview">
+        <article className="room-detail-section room-detail-section--environment">
+          <header className="room-detail-section__header">
+            <div>
+              <span className="rooms-section__kicker">Ambiente</span>
+              <h2 className="room-detail-section__title">Médias ambientais</h2>
+            </div>
+            <span className="room-status-chip room-status-chip--ghost">
+              {room.history.length > 0 ? `Atualizado ${formatRelativeTime(parseDateValue(room.history[room.history.length - 1]?.timestamp))}` : 'Sem leitura'}
+            </span>
+          </header>
+
+          <div className="room-detail-environment-grid">
+            <article className="room-detail-environment-card">
+              <span>Temperatura</span>
+              <strong>
+                <Thermometer className="h-4 w-4" />
+                {formatMetric(room.mediaTemperatura, '°C', 1)}
+              </strong>
+              <p>Faixa-alvo: {room.targets.temperatura.min}°C a {room.targets.temperatura.max}°C</p>
+            </article>
+            <article className="room-detail-environment-card">
+              <span>Umidade</span>
+              <strong>
+                <Droplets className="h-4 w-4" />
+                {formatMetric(room.mediaUmidade, '%', 0)}
+              </strong>
+              <p>Faixa-alvo: {room.targets.umidade.min}% a {room.targets.umidade.max}%</p>
+            </article>
+            <article className="room-detail-environment-card">
+              <span>CO2</span>
+              <strong>
+                <Wind className="h-4 w-4" />
+                {formatMetric(room.mediaCo2, ' ppm', 0)}
+              </strong>
+              <p>Meta abaixo de {room.targets.co2.idealMax} ppm</p>
+            </article>
+            <article className="room-detail-environment-card">
+              <span>Luminosidade</span>
+              <strong>
+                <Radio className="h-4 w-4" />
+                {formatMetric(room.mediaLuminosidade, ' lux', 0)}
+              </strong>
+              <p>
+                {room.mediaLuminosidade !== null
+                  ? room.targets.luminosidade.min !== null || room.targets.luminosidade.max !== null
+                    ? `Faixa-alvo: ${room.targets.luminosidade.min ?? 0} a ${room.targets.luminosidade.max ?? '∞'} lux`
+                    : 'Sem faixa configurada para luz'
+                  : 'Sem leitura de luminosidade'}
+              </p>
+            </article>
+          </div>
         </article>
-        <article className="room-detail-summary-card">
-          <span>Umidade média</span>
-          <strong>
-            <Droplets className="h-4 w-4" />
-            {formatMetric(room.mediaUmidade, '%', 0)}
-          </strong>
-          <p>Faixa comum usada para regras de climatização e nebulização.</p>
-        </article>
-        <article className="room-detail-summary-card">
-          <span>CO2 médio</span>
-          <strong>
-            <Wind className="h-4 w-4" />
-            {formatMetric(room.mediaCo2, ' ppm', 0)}
-          </strong>
-          <p>Usado para ventilação e exaustão conforme a fase operacional.</p>
-        </article>
-        <article className="room-detail-summary-card">
-          <span>Luz média</span>
-          <strong>
-            <Radio className="h-4 w-4" />
-            {formatMetric(room.mediaLuminosidade, ' lux', 0)}
-          </strong>
-          <p>Metas de iluminação seguem a referência da sala e o contexto dos lotes ativos.</p>
-        </article>
-        <article className="room-detail-summary-card">
-          <span>Desvio entre sensores</span>
-          <strong>
-            <Radio className="h-4 w-4" />
-            {room.divergence.temperatura.toFixed(1)}°C / {room.divergence.umidade.toFixed(0)}%
-          </strong>
-          <p>Divergência alta gera alerta e reduz confiança da automação.</p>
+
+        <article className="room-detail-history-card">
+          <header className="room-detail-section__header">
+            <div>
+              <span className="rooms-section__kicker">Histórico</span>
+              <h2 className="room-detail-section__title">Últimos 7 dias</h2>
+            </div>
+          </header>
+
+          <div className="room-detail-history-card__series">
+            <div>
+              <div className="room-detail-history-card__row">
+                <span>Temp</span>
+                <strong>{formatMetric(room.mediaTemperatura, '°C', 1)} avg</strong>
+              </div>
+              <div className="room-detail-history-card__bars">
+                {temperatureBars.length > 0 ? temperatureBars.map((bar, index) => (
+                  <span key={`temp-${index}`} style={{ height: `${bar.height}%` }} />
+                )) : <div className="room-detail-empty room-detail-empty--compact">Sem histórico</div>}
+              </div>
+            </div>
+            <div>
+              <div className="room-detail-history-card__row">
+                <span>Umid</span>
+                <strong>{formatMetric(room.mediaUmidade, '%', 0)} avg</strong>
+              </div>
+              <div className="room-detail-history-card__bars room-detail-history-card__bars--humidity">
+                {humidityBars.length > 0 ? humidityBars.map((bar, index) => (
+                  <span key={`humid-${index}`} style={{ height: `${bar.height}%` }} />
+                )) : <div className="room-detail-empty room-detail-empty--compact">Sem histórico</div>}
+              </div>
+            </div>
+          </div>
         </article>
       </section>
 
@@ -342,22 +454,39 @@ export function SalaDetails() {
           <section className="room-detail-section">
             <header className="room-detail-section__header">
               <div>
-                <span className="rooms-section__kicker">Alertas</span>
-                <h2 className="room-detail-section__title">Alertas da sala</h2>
+                <span className="rooms-section__kicker">Telemetria</span>
+                <h2 className="room-detail-section__title">Sensores individuais</h2>
               </div>
+              {room.divergence.temperatura >= 1.5 || room.divergence.umidade >= 8 || room.divergence.co2 >= 120 ? (
+                <span className="room-status-chip room-status-chip--warning">Desvio detectado</span>
+              ) : null}
             </header>
-            {room.alerts.length === 0 ? (
-              <div className="room-detail-empty">Nenhum alerta ativo nesta sala.</div>
+
+            {room.sensores.length === 0 ? (
+              <div className="room-detail-empty">Nenhum sensor vinculado ainda.</div>
             ) : (
-              <div className="room-alert-list">
-                {room.alerts.map((alert) => (
-                  <article key={alert.id} className={`room-alert-card room-alert-card--${alert.tone}`}>
-                    <div className="room-alert-card__icon">
-                      {alert.tone === 'critical' ? <XCircle className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+              <div className="room-sensor-list room-sensor-list--detail">
+                {room.sensores.map((sensor) => (
+                  <article key={sensor.key} className={`room-sensor-card room-sensor-card--detail ${sensor.online ? '' : 'room-sensor-card--offline'}`}>
+                    <div className="room-sensor-card__head">
+                      <div>
+                        <strong>{sensor.label}</strong>
+                        <p>{sensor.sourceLabel}</p>
+                      </div>
+                      <span className={`room-status-chip ${sensor.online ? 'room-status-chip--ok' : 'room-status-chip--critical'}`}>
+                        {sensor.online ? 'Online' : 'Offline'}
+                      </span>
                     </div>
-                    <div>
-                      <strong>{alert.title}</strong>
-                      <p>{alert.description}</p>
+
+                    <div className="room-sensor-card__metrics room-sensor-card__metrics--detail">
+                      <span>{formatMetric(sensor.temperatura, '°C', 1)}</span>
+                      <span>{formatMetric(sensor.umidade, '%', 0)}</span>
+                      <span>{formatMetric(sensor.co2, ' ppm', 0)}</span>
+                    </div>
+
+                    <div className="room-sensor-card__footer">
+                      <span>Última leitura {formatRelativeTime(sensor.lastSeen)}</span>
+                      <span>Risco {sensor.scoreRisco.toFixed(0)}</span>
                     </div>
                   </article>
                 ))}
@@ -368,35 +497,38 @@ export function SalaDetails() {
           <section className="room-detail-section">
             <header className="room-detail-section__header">
               <div>
-                <span className="rooms-section__kicker">Metas da sala</span>
-                <h2 className="room-detail-section__title">Alvos ambientais</h2>
+                <span className="rooms-section__kicker">Infraestrutura</span>
+                <h2 className="room-detail-section__title">Atuadores & hardware</h2>
               </div>
             </header>
 
-            <div className="room-context-card">
-              <div className="room-context-card__item">
-                <Thermometer className="h-4 w-4" />
-                <span>{room.targets.temperatura.min}°C a {room.targets.temperatura.max}°C</span>
+            {room.atuadores.length === 0 ? (
+              <div className="room-detail-empty">Nenhum atuador vinculado à sala.</div>
+            ) : (
+              <div className="room-actuator-grid">
+                {room.atuadores.map((atuador) => (
+                  <article key={atuador.id} className="room-actuator-card room-actuator-card--tile">
+                    <div className="room-actuator-card__head">
+                      <div className="room-actuator-card__title-row">
+                        <Cpu className="h-4 w-4" />
+                        <strong>{atuador.nome}</strong>
+                      </div>
+                      <button type="button" className={`room-toggle ${normalizeText(atuador.status) === 'online' ? 'room-toggle--active' : ''}`} aria-label={`Estado de ${atuador.nome}`}>
+                        <span />
+                      </button>
+                    </div>
+                    <div className="room-actuator-card__meta room-actuator-card__meta--tile">
+                      <span>{atuador.tipo || 'Tipo não informado'}</span>
+                      <span>{atuador.modo_padrao || 'remote'}</span>
+                      <span>{normalizeText(atuador.status) === 'online' ? 'Ativo' : 'Inativo'}</span>
+                    </div>
+                  </article>
+                ))}
               </div>
-              <div className="room-context-card__item">
-                <Droplets className="h-4 w-4" />
-                <span>{room.targets.umidade.min}% a {room.targets.umidade.max}%</span>
-              </div>
-              <div className="room-context-card__item">
-                <Wind className="h-4 w-4" />
-                <span>CO2 abaixo de {room.targets.co2.idealMax} ppm</span>
-              </div>
-              <div className="room-context-card__item">
-                <Radio className="h-4 w-4" />
-                <span>
-                  {room.targets.luminosidade.min !== null || room.targets.luminosidade.max !== null
-                    ? `${room.targets.luminosidade.min ?? 0}-${room.targets.luminosidade.max ?? 0} lux`
-                    : 'Sem alvo de luz configurado'}
-                </span>
-              </div>
-            </div>
+            )}
           </section>
 
+          <div className="room-detail-dual-grid">
           <section className="room-detail-section">
             <header className="room-detail-section__header">
               <div>
@@ -422,12 +554,11 @@ export function SalaDetails() {
               ))}
             </div>
           </section>
-
           <section className="room-detail-section">
             <header className="room-detail-section__header">
               <div>
                 <span className="rooms-section__kicker">Produção</span>
-                <h2 className="room-detail-section__title">Lotes da sala</h2>
+                <h2 className="room-detail-section__title">Lotes ativos</h2>
               </div>
             </header>
 
@@ -458,18 +589,42 @@ export function SalaDetails() {
               </div>
             )}
           </section>
-
+          </div>
           <section className="room-detail-section">
             <header className="room-detail-section__header">
               <div>
-                <span className="rooms-section__kicker">Histórico</span>
-                <h2 className="room-detail-section__title">Gráficos ambientais</h2>
+                <span className="rooms-section__kicker">Alertas</span>
+                <h2 className="room-detail-section__title">Alertas recentes</h2>
               </div>
             </header>
-
-            {chartData.length === 0 ? (
-              <div className="room-detail-empty">Sem histórico suficiente para renderizar gráficos desta sala.</div>
+            {room.alerts.length === 0 ? (
+              <div className="room-detail-empty">Nenhum alerta ativo nesta sala.</div>
             ) : (
+              <div className="room-alert-list room-alert-list--stacked">
+                {room.alerts.map((alert) => (
+                  <article key={alert.id} className={`room-alert-card room-alert-card--${alert.tone}`}>
+                    <div className="room-alert-card__icon">
+                      {alert.tone === 'critical' ? <XCircle className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                    </div>
+                    <div>
+                      <strong>{alert.title}</strong>
+                      <p>{alert.description}</p>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {chartData.length > 0 ? (
+            <section className="room-detail-section">
+              <header className="room-detail-section__header">
+                <div>
+                  <span className="rooms-section__kicker">Histórico</span>
+                  <h2 className="room-detail-section__title">Gráficos ambientais</h2>
+                </div>
+              </header>
+
               <div className="room-chart-grid">
                 <article className="room-chart-card">
                   <header className="room-chart-card__header">
@@ -525,122 +680,50 @@ export function SalaDetails() {
                   </div>
                 </article>
               </div>
-            )}
-          </section>
-        </div>
+            </section>
+          ) : null}
 
-        <aside className="room-detail-aside">
-          <section className="room-detail-section">
+          <section className="room-detail-section room-detail-section--insight room-detail-section--insight-wide">
             <header className="room-detail-section__header">
               <div>
-                <span className="rooms-section__kicker">Telemetria</span>
-                <h2 className="room-detail-section__title">Sensores da sala</h2>
+                <span className="rooms-section__kicker">Insight operacional</span>
+                <h2 className="room-detail-section__title">Leitura consolidada da sala</h2>
               </div>
             </header>
 
-            {room.sensores.length === 0 ? (
-              <div className="room-detail-empty">Nenhum sensor vinculado ainda.</div>
-            ) : (
-              <div className="room-sensor-list">
-                {room.sensores.map((sensor) => (
-                  <article key={sensor.key} className={`room-sensor-card ${sensor.online ? '' : 'room-sensor-card--offline'}`}>
-                    <div className="room-sensor-card__head">
-                      <div>
-                        <strong>{sensor.label}</strong>
-                        <p>{sensor.sourceLabel}</p>
-                      </div>
-                      <span className={`room-status-chip ${sensor.online ? 'room-status-chip--ok' : 'room-status-chip--critical'}`}>
-                        {sensor.online ? 'Online' : 'Offline'}
-                      </span>
-                    </div>
-
-                    <div className="room-sensor-card__metrics">
-                      <span>{formatMetric(sensor.temperatura, '°C', 1)}</span>
-                      <span>{formatMetric(sensor.umidade, '%', 0)}</span>
-                      <span>{formatMetric(sensor.co2, ' ppm', 0)}</span>
-                    </div>
-
-                    <div className="room-sensor-card__footer">
-                      <span>Última leitura {formatRelativeTime(sensor.lastSeen)}</span>
-                      <span>Risco {sensor.scoreRisco.toFixed(0)}</span>
-                    </div>
-                  </article>
-                ))}
+            <div className="room-context-card room-context-card--insight room-context-card--insight-wide">
+              <div className="room-context-card__grid">
+                <div className="room-context-card__item">
+                  <Building2 className="h-4 w-4" />
+                  <span>{room.sala.nome}</span>
+                </div>
+                <div className="room-context-card__item">
+                  <Boxes className="h-4 w-4" />
+                  <span>{room.lotesAtivos} lote(s) ativo(s)</span>
+                </div>
+                <div className="room-context-card__item">
+                  <BellRing className="h-4 w-4" />
+                  <span>{room.primaryAlert?.title || 'Sem alerta prioritário'}</span>
+                </div>
+                <div className="room-context-card__item">
+                  {offlineSensors > 0 ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+                  <span>{offlineSensors > 0 ? `${offlineSensors} sensor(es) offline` : 'Telemetria consistente'}</span>
+                </div>
+                <div className="room-context-card__item">
+                  <Bot className="h-4 w-4" />
+                  <span>Automação por média da sala com contexto dos lotes</span>
+                </div>
               </div>
-            )}
-          </section>
-
-          <section className="room-detail-section">
-            <header className="room-detail-section__header">
-              <div>
-                <span className="rooms-section__kicker">Infraestrutura</span>
-                <h2 className="room-detail-section__title">Atuadores da sala</h2>
-              </div>
-            </header>
-
-            {room.atuadores.length === 0 ? (
-              <div className="room-detail-empty">Nenhum atuador vinculado à sala.</div>
-            ) : (
-              <div className="room-actuator-list">
-                {room.atuadores.map((atuador) => (
-                  <article key={atuador.id} className="room-actuator-card">
-                    <div className="room-actuator-card__head">
-                      <div className="room-actuator-card__title-row">
-                        <Cpu className="h-4 w-4" />
-                        <strong>{atuador.nome}</strong>
-                      </div>
-                      <span className={`room-status-chip ${normalizeText(atuador.status) === 'online' ? 'room-status-chip--ok' : 'room-status-chip--ghost'}`}>
-                        {atuador.status || 'sem status'}
-                      </span>
-                    </div>
-                    <div className="room-actuator-card__meta">
-                      <span>Tipo: {atuador.tipo || 'não informado'}</span>
-                      <span>Modo: {atuador.modo_padrao || 'remote'}</span>
-                      <span>Local: {atuador.localizacao || 'não informado'}</span>
-                      <span>Relays: {Object.keys(atuador.relay_map || {}).length}</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="room-detail-section">
-            <header className="room-detail-section__header">
-              <div>
-                <span className="rooms-section__kicker">Resumo</span>
-                <h2 className="room-detail-section__title">Estado operacional</h2>
-              </div>
-            </header>
-
-            <div className="room-context-card">
-              <div className="room-context-card__item">
-                <Building2 className="h-4 w-4" />
-                <span>{room.sala.nome}</span>
-              </div>
-              <div className="room-context-card__item">
-                <Boxes className="h-4 w-4" />
-                <span>{room.lotesAtivos} lote(s) ativo(s)</span>
-              </div>
-              <div className="room-context-card__item">
-                <BellRing className="h-4 w-4" />
-                <span>{room.primaryAlert?.title || 'Sem alerta prioritário'}</span>
-              </div>
-              <div className="room-context-card__item">
-                <Boxes className="h-4 w-4" />
-                <span>{room.lotContext.primaryPhase || 'Sem fase dominante'} • {room.lotContext.highlightedLotCode || 'sem lote destaque'}</span>
-              </div>
-              <div className="room-context-card__item">
-                {offlineSensors > 0 ? <XCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                <span>{offlineSensors > 0 ? `${offlineSensors} sensor(es) offline` : 'Telemetria consistente'}</span>
-              </div>
-              <div className="room-context-card__item">
-                <Bot className="h-4 w-4" />
-                <span>Automação por média da sala com contexto dos lotes</span>
-              </div>
+              {roomInsight ? (
+                <div className="room-context-card__insight">
+                  <strong>{roomInsight.title}</strong>
+                  <p>{roomInsight.copy}</p>
+                  <span>{roomInsight.meta}</span>
+                </div>
+              ) : null}
             </div>
           </section>
-        </aside>
+        </div>
       </div>
     </div>
   );

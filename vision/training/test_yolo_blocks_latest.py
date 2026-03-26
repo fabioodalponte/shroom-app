@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from pathlib import Path
 import sys
@@ -21,7 +22,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-path", default="", help="Optional image path to override the latest snapshot lookup")
     parser.add_argument("--image", default="", help="Deprecated alias for --image-path")
     parser.add_argument("--output", default="", help="Optional JSON path to save the test result")
+    parser.add_argument("--model-path", default="", help="Optional model path override for the primary test")
+    parser.add_argument("--compare-model-path", default="", help="Optional second model path to compare on the same image")
     return parser
+
+
+def build_config_with_model_override(config: dict, model_path: str) -> dict:
+    updated = copy.deepcopy(config)
+    updated.setdefault("inference", {})
+    updated["inference"]["model_path"] = model_path
+    updated["inference"]["model"] = model_path
+    return updated
 
 
 def main() -> int:
@@ -58,13 +69,21 @@ def main() -> int:
         file=sys.stderr,
     )
 
-    detection_result = detect_blocks(image_path=image_path, config=config, logger=None)
+    active_config = build_config_with_model_override(config, args.model_path) if args.model_path else config
+    detection_result = detect_blocks(image_path=image_path, config=active_config, logger=None)
     payload = {
         "status": "block_detector_test_complete",
         "image_path": str(image_path),
         "image_selection": selection_info,
         "block_detection": detection_result,
     }
+
+    if args.compare_model_path:
+        compare_config = build_config_with_model_override(config, args.compare_model_path)
+        payload["comparison"] = {
+            "model_path": args.compare_model_path,
+            "block_detection": detect_blocks(image_path=image_path, config=compare_config, logger=None),
+        }
 
     if detection_result.get("error"):
         print(json.dumps(payload, indent=2, ensure_ascii=True))

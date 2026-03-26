@@ -35,6 +35,8 @@ class VisionOrchestrator:
 
     def status(self) -> dict[str, Any]:
         """Return static runtime status without touching camera or model."""
+        inference_config = self.config.get("inference", {})
+        primary_model_path = inference_config.get("model_path") or inference_config.get("model")
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "enabled": self.config.get("enabled", False),
@@ -58,10 +60,13 @@ class VisionOrchestrator:
             "results_dir": str(self.artifact_store.results_dir),
             "dataset_dir": str(self.artifact_store.dataset_dir),
             "log_dir": str(self.config.get("logging", {}).get("dir", "vision/logs")),
-            "mode": self.config.get("inference", {}).get("mode", "stub"),
-            "inference_enabled": self.config.get("inference", {}).get("enabled", True),
-            "inference_model": self.config.get("inference", {}).get("model"),
-            "inference_device": self.config.get("inference", {}).get("device", "cpu"),
+            "mode": inference_config.get("mode", "stub"),
+            "inference_enabled": inference_config.get("enabled", True),
+            "inference_model": primary_model_path,
+            "inference_model_path": primary_model_path,
+            "inference_fallback_model_path": inference_config.get("fallback_model_path"),
+            "inference_model_version": "v2" if "v2" in str(primary_model_path or "") else "v1",
+            "inference_device": inference_config.get("device", "cpu"),
             "quality_thresholds": self.inference_pipeline.quality_thresholds,
             "dataset_classification_enabled": self.dataset_classifier.enabled,
             "remote_persistence_enabled": self.remote_persister.enabled,

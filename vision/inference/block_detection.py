@@ -10,7 +10,7 @@ import subprocess
 import sys
 from typing import Any
 
-from ..models.yolo_block_detector import load_block_detector
+from ..models.yolo_block_detector import infer_model_version, load_block_detector, resolve_configured_model_paths
 
 
 def _runtime_info() -> dict[str, str]:
@@ -23,12 +23,26 @@ def _runtime_info() -> dict[str, str]:
 def _empty_detection_result(
     config: dict[str, Any] | None,
     error: str | None = None,
+    model_path: str | Path | None = None,
+    model_version: str | None = None,
+    device: str | None = None,
+    used_fallback: bool = False,
+    requested_model_path: str | Path | None = None,
+    fallback_model_path: str | Path | None = None,
 ) -> dict[str, Any]:
     inference_config = (config or {}).get("inference", {})
+    configured_model_path, configured_fallback_model_path = resolve_configured_model_paths(config)
+    selected_model_path = Path(model_path) if model_path is not None else configured_model_path
+    resolved_model_version = model_version or infer_model_version(selected_model_path)
     return {
         "enabled": bool(inference_config.get("enabled", True)),
-        "model": str(inference_config.get("model", "vision/models/block_detector.pt")),
-        "device": str(inference_config.get("device", "cpu") or "cpu"),
+        "model": str(selected_model_path),
+        "model_path": str(selected_model_path),
+        "model_version": resolved_model_version,
+        "used_fallback": used_fallback,
+        "requested_model_path": str(requested_model_path or configured_model_path),
+        "fallback_model_path": str(fallback_model_path or configured_fallback_model_path or ""),
+        "device": str(device or inference_config.get("device", "cpu") or "cpu"),
         "blocos_detectados": 0,
         "detections": [],
         "error": error,
@@ -45,12 +59,24 @@ def detect_blocks_in_process(
     path = Path(image_path)
     detector = load_block_detector(config=config, logger=logger)
     if not detector.enabled or not detector.available or detector.model is None:
-        result = _empty_detection_result(config, error=detector.error)
+        result = _empty_detection_result(
+            config,
+            error=detector.error,
+            model_path=detector.model_path,
+            model_version=detector.model_version,
+            device=detector.device,
+            used_fallback=detector.used_fallback,
+            requested_model_path=detector.requested_model_path,
+            fallback_model_path=detector.fallback_model_path,
+        )
         if logger:
             logger.info(
-                "vision block_detection_complete image_path=%s model_available=%s blocks_detected=%s",
+                "vision block_detection_complete image_path=%s model_available=%s model_version=%s model_path=%s device=%s blocks_detected=%s",
                 path,
                 False,
+                result.get("model_version"),
+                result.get("model_path"),
+                result.get("device"),
                 0,
             )
             logger.info("vision blocks_detected=%s image_path=%s", 0, path)
@@ -60,6 +86,25 @@ def detect_blocks_in_process(
     confidence_threshold = float(inference_config.get("confidence_threshold", 0.25))
 
     try:
+        if logger:
+            logger.info(
+                "vision block_detection_model_selected image_path=%s model_version=%s model_path=%s device=%s used_fallback=%s",
+                path,
+                detector.model_version,
+                detector.model_path,
+                detector.device,
+                detector.used_fallback,
+            )
+            if detector.used_fallback:
+                logger.warning(
+                    "vision block_detector_fallback_used image_path=%s requested_model_path=%s fallback_model_path=%s active_model_path=%s model_version=%s device=%s",
+                    path,
+                    detector.requested_model_path,
+                    detector.fallback_model_path,
+                    detector.model_path,
+                    detector.model_version,
+                    detector.device,
+                )
         results = detector.model.predict(
             source=str(path),
             device=detector.device,
@@ -96,6 +141,11 @@ def detect_blocks_in_process(
         payload = {
             "enabled": True,
             "model": str(detector.model_path),
+            "model_path": str(detector.model_path),
+            "model_version": detector.model_version,
+            "used_fallback": detector.used_fallback,
+            "requested_model_path": str(detector.requested_model_path),
+            "fallback_model_path": str(detector.fallback_model_path or ""),
             "device": detector.device,
             "blocos_detectados": len(detections),
             "detections": detections,
@@ -104,9 +154,12 @@ def detect_blocks_in_process(
         }
         if logger:
             logger.info(
-                "vision block_detection_complete image_path=%s model_available=%s blocks_detected=%s",
+                "vision block_detection_complete image_path=%s model_available=%s model_version=%s model_path=%s device=%s blocks_detected=%s",
                 path,
                 True,
+                detector.model_version,
+                detector.model_path,
+                detector.device,
                 len(detections),
             )
             logger.info("vision blocks_detected=%s image_path=%s", len(detections), path)
@@ -114,12 +167,24 @@ def detect_blocks_in_process(
     except Exception as exc:  # pragma: no cover - depends on model/runtime
         if logger:
             logger.exception("vision block_detection_failed image_path=%s", path)
-        result = _empty_detection_result(config, error=str(exc))
+        result = _empty_detection_result(
+            config,
+            error=str(exc),
+            model_path=detector.model_path,
+            model_version=detector.model_version,
+            device=detector.device,
+            used_fallback=detector.used_fallback,
+            requested_model_path=detector.requested_model_path,
+            fallback_model_path=detector.fallback_model_path,
+        )
         if logger:
             logger.info(
-                "vision block_detection_complete image_path=%s model_available=%s blocks_detected=%s",
+                "vision block_detection_complete image_path=%s model_available=%s model_version=%s model_path=%s device=%s blocks_detected=%s",
                 path,
                 True,
+                result.get("model_version"),
+                result.get("model_path"),
+                result.get("device"),
                 0,
             )
             logger.info("vision blocks_detected=%s image_path=%s", 0, path)
@@ -236,10 +301,23 @@ def detect_blocks(
             )
         result = _detect_blocks_in_subprocess(path, config=config, logger=logger)
         if logger:
+            if result.get("used_fallback"):
+                logger.warning(
+                    "vision block_detector_fallback_used image_path=%s requested_model_path=%s fallback_model_path=%s active_model_path=%s model_version=%s device=%s",
+                    path,
+                    result.get("requested_model_path"),
+                    result.get("fallback_model_path"),
+                    result.get("model_path"),
+                    result.get("model_version"),
+                    result.get("device"),
+                )
             logger.info(
-                "vision block_detection_complete image_path=%s model_available=%s blocks_detected=%s worker_python=%s worker_python_version=%s",
+                "vision block_detection_complete image_path=%s model_available=%s model_version=%s model_path=%s device=%s blocks_detected=%s worker_python=%s worker_python_version=%s",
                 path,
                 result.get("error") is None,
+                result.get("model_version"),
+                result.get("model_path"),
+                result.get("device"),
                 result.get("blocos_detectados", 0),
                 result.get("python_executable"),
                 result.get("python_version"),
