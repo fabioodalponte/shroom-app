@@ -71,6 +71,8 @@ class VisionOrchestrator:
             "dataset_classification_enabled": self.dataset_classifier.enabled,
             "remote_persistence_enabled": self.remote_persister.enabled,
             "remote_env_ready": self.remote_persister.env_config.is_ready,
+            "remote_env_file": self.remote_persister.env_config.env_file_path,
+            "remote_env_file_loaded": self.remote_persister.env_config.env_file_loaded,
         }
 
     def capture_once(self) -> dict[str, Any]:
@@ -182,6 +184,94 @@ class VisionOrchestrator:
             "result": inference_result,
         }
         self.logger.info("vision capture_pipeline_complete mode=pipeline_once status=%s", result["status"])
+        return result
+
+    def _load_saved_snapshot_metadata(self, image_path: Path) -> dict[str, Any]:
+        metadata_path = image_path.with_suffix(".json")
+        if not metadata_path.exists():
+            return {}
+
+        try:
+            payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                return payload
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self.logger.warning(
+                "vision saved_snapshot_metadata_invalid image_path=%s metadata_path=%s error=%s",
+                image_path,
+                metadata_path,
+                exc,
+            )
+        return {}
+
+    def _run_pipeline_for_existing_snapshot(
+        self,
+        image_path: Path,
+        capture_metadata: dict[str, Any],
+        mode: str,
+    ) -> dict[str, Any]:
+        inference_result = self.inference_pipeline.run(
+            image_path=image_path,
+            capture_metadata=capture_metadata,
+        )
+        dataset_classification = self.dataset_classifier.classify_safe(
+            image_path=image_path,
+            quality_check=inference_result["quality_check"],
+        )
+        inference_result["dataset_classification"] = dataset_classification
+        inference_result["summary"]["dataset_class"] = dataset_classification["dataset_class"]
+        remote_persistence = self.remote_persister.persist_pipeline_result_safe(
+            image_path=image_path,
+            pipeline_result=inference_result,
+        )
+        inference_result["remote_persistence"] = remote_persistence
+        inference_result["remote_persisted"] = remote_persistence["remote_persisted"]
+        inference_result["storage_uploaded"] = remote_persistence["storage_uploaded"]
+        inference_result["db_record_created"] = remote_persistence["db_record_created"]
+        inference_result["summary"]["remote_persisted"] = remote_persistence["remote_persisted"]
+
+        saved_result = self.artifact_store.save_inference_result(
+            image_path=image_path,
+            result=inference_result,
+        )
+        return {
+            "status": "pipeline_complete",
+            "execution_mode": mode,
+            "saved_image": str(image_path),
+            "saved_result": str(saved_result),
+            "result": inference_result,
+        }
+
+    def reprocess_latest(self, lote_id: str | None = None) -> dict[str, Any]:
+        """Re-run the full pipeline for the latest saved snapshot and persist the result."""
+        self.logger.info("vision capture_pipeline_start mode=reprocess_latest")
+        latest_snapshot = self.artifact_store.find_latest_snapshot()
+        if latest_snapshot is None:
+            result = {
+                "status": "no_snapshot_found",
+                "artifacts_dir": str(self.artifact_store.artifacts_dir),
+            }
+            self.logger.info("vision capture_pipeline_complete mode=reprocess_latest status=%s", result["status"])
+            return result
+
+        capture_metadata = self._load_saved_snapshot_metadata(latest_snapshot)
+        resolved_lote_id = self._resolve_lote_id(lote_id) or capture_metadata.get("lote_id")
+        if resolved_lote_id:
+            capture_metadata["lote_id"] = resolved_lote_id
+        capture_metadata.setdefault("source", "saved_snapshot_reprocess")
+        capture_metadata["reprocessed_from_saved_snapshot"] = True
+        capture_metadata["reprocessed_at"] = datetime.now(timezone.utc).isoformat()
+
+        result = self._run_pipeline_for_existing_snapshot(
+            image_path=latest_snapshot,
+            capture_metadata=capture_metadata,
+            mode="reprocess_latest",
+        )
+        self.logger.info(
+            "vision capture_pipeline_complete mode=reprocess_latest status=%s image_path=%s",
+            result["status"],
+            latest_snapshot,
+        )
         return result
 
     def quality_latest(self) -> dict[str, Any]:
@@ -374,7 +464,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Shroom vision module runner")
     parser.add_argument(
         "command",
-        choices=["status", "capture-once", "pipeline-once", "quality-latest", "dataset-classify-latest", "detect-blocks-latest", "scheduled-capture"],
+        choices=[
+            "status",
+            "capture-once",
+            "pipeline-once",
+            "reprocess-latest",
+            "quality-latest",
+            "dataset-classify-latest",
+            "detect-blocks-latest",
+            "scheduled-capture",
+        ],
         help="Action to execute",
     )
     parser.add_argument(
@@ -406,6 +505,10 @@ def main() -> int:
 
         if args.command == "pipeline-once":
             print_json(orchestrator.pipeline_once(lote_id=args.lote_id))
+            return 0
+
+        if args.command == "reprocess-latest":
+            print_json(orchestrator.reprocess_latest(lote_id=args.lote_id))
             return 0
 
         if args.command == "quality-latest":
