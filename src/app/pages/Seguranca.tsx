@@ -104,6 +104,7 @@ interface CameraConfig {
   id: string;
   nome: string;
   localizacao: string;
+  sala_id?: string | null;
   tipo?: string | null;
   status?: string | null;
   url_stream?: string | null;
@@ -115,6 +116,7 @@ interface CameraConfig {
 interface SalaControllerConfig {
   id: string;
   nome: string;
+  sala_id?: string | null;
   localizacao: string;
   tipo?: string | null;
   status?: string | null;
@@ -197,6 +199,15 @@ interface SalaOperacionalCard {
   sparkToneClassName: string;
   productionImpact: string;
   actionLabel: string;
+}
+
+interface SalaCatalogConfig {
+  id: string;
+  codigo?: string | null;
+  nome: string;
+  tipo?: string | null;
+  ativa?: boolean | null;
+  primary_camera_id?: string | null;
 }
 
 const CAMERA_FRAME_SIZE_OPTIONS = ['QQVGA', 'QVGA', 'CIF', 'VGA', 'SVGA', 'XGA'] as const;
@@ -700,6 +711,7 @@ export function Seguranca() {
   const [controladorComando, setControladorComando] = useState<string | null>(null);
   const [controladorInfo, setControladorInfo] = useState<string | null>(null);
   const [controladorErro, setControladorErro] = useState<string | null>(null);
+  const [salasCatalogo, setSalasCatalogo] = useState<SalaCatalogConfig[]>([]);
   const [isMobileViewport, setIsMobileViewport] = useState(() => {
     if (typeof window === 'undefined') return false;
     return window.matchMedia('(max-width: 640px)').matches;
@@ -711,10 +723,11 @@ export function Seguranca() {
 
     try {
       const hours = periodoHistorico === '24h' ? 24 : 168;
-      const [sensoresResult, camerasResult, controladoresResult] = await Promise.allSettled([
+      const [sensoresResult, camerasResult, controladoresResult, salasResult] = await Promise.allSettled([
         fetchServer(`/sensores/latest?hours=${hours}`),
         fetchServer('/cameras'),
         fetchServer('/controladores'),
+        fetchServer('/salas'),
       ]);
 
       if (sensoresResult.status === 'rejected') {
@@ -737,12 +750,20 @@ export function Seguranca() {
         console.warn('Não foi possível carregar controladores de sala:', controladoresResult.reason);
         setControladoresSala([]);
       }
+
+      if (salasResult.status === 'fulfilled') {
+        setSalasCatalogo((salasResult.value.salas || []) as SalaCatalogConfig[]);
+      } else {
+        console.warn('Não foi possível carregar salas:', salasResult.reason);
+        setSalasCatalogo([]);
+      }
     } catch (error: any) {
       console.error('Erro ao carregar monitoramento de sensores:', error);
       setErrorMessage(error.message || 'Erro ao carregar sensores');
       setLotes([]);
       setCameras(prepareCameraList([]));
       setControladoresSala([]);
+      setSalasCatalogo([]);
     } finally {
       setLoading(false);
     }
@@ -918,6 +939,18 @@ export function Seguranca() {
     void carregarStatusControladorSala(controlador.id);
   }, [carregarStatusControladorSala, getControladorForLote]);
 
+  const abrirControlePorConfig = useCallback((controlador: SalaControllerConfig | null) => {
+    if (!controlador) return;
+
+    setControladorSelecionado(controlador);
+    setControladorStatus(null);
+    setControladorInfo(null);
+    setControladorErro(null);
+    setControladorComando(null);
+    setControladorDialogOpen(true);
+    void carregarStatusControladorSala(controlador.id);
+  }, [carregarStatusControladorSala]);
+
   const alterarModoControladorSala = useCallback(async (mode: 'manual' | 'remote') => {
     if (!controladorSelecionado?.id) return;
 
@@ -1009,8 +1042,7 @@ export function Seguranca() {
     return () => window.clearInterval(timerId);
   }, [carregarStatusControladorSala, controladorDialogOpen, controladorSelecionado?.id]);
 
-  const abrirCameraDoLote = useCallback((lote: LoteMonitoramento) => {
-    const camera = getCameraForLote(lote);
+  const abrirCamera = useCallback((camera: CameraConfig | null) => {
     setCameraSelecionada(camera);
     setCameraErroCarregamento(null);
     setCameraFrameWithFlash(false);
@@ -1019,7 +1051,12 @@ export function Seguranca() {
     setCameraFlashInfo(null);
     setCameraFlashErro(null);
     setCameraDialogOpen(true);
-  }, [getCameraForLote]);
+  }, []);
+
+  const abrirCameraDoLote = useCallback((lote: LoteMonitoramento) => {
+    const camera = getCameraForLote(lote);
+    abrirCamera(camera);
+  }, [abrirCamera, getCameraForLote]);
 
   const abrirConfiguracaoCamera = useCallback((camera: CameraConfig | null) => {
     if (!camera) return;
@@ -1429,6 +1466,75 @@ export function Seguranca() {
       eficiencia: Math.max(0, Math.min(100, eficienciaBase)),
     };
   }, [lotes, lotesAlerta, salasOperacionais]);
+  const getCameraForSalaConfig = useCallback((sala: SalaCatalogConfig) => {
+    if (!cameras.length) return null;
+
+    const camerasAtivas = cameras.filter((camera) => normalizeText(String(camera.status || 'ativa')) !== 'inativa');
+    const base = camerasAtivas.length ? camerasAtivas : cameras;
+    const baseComStream = [...base.filter(hasCameraStream)].sort(
+      (a, b) => scoreCameraStreamUrl(b.url_stream) - scoreCameraStreamUrl(a.url_stream),
+    );
+    const universoBusca = baseComStream.length ? baseComStream : base;
+    const explicitCameraId = String(sala.primary_camera_id || '').trim();
+    const salaId = normalizeSalaId(sala.id) || normalizeSalaId(sala.codigo) || null;
+    const salaNome = normalizeText(sala.nome || '');
+
+    if (explicitCameraId) {
+      const explicitCamera = cameras.find((camera) => camera.id === explicitCameraId) || null;
+      if (explicitCamera) return explicitCamera;
+    }
+
+    return (
+      universoBusca.find((camera) => normalizeSalaId(camera.sala_id) === salaId) ||
+      universoBusca.find((camera) => {
+        const nome = normalizeText(camera.nome || '');
+        const localizacao = normalizeText(camera.localizacao || '');
+        return (
+          (!!salaId && (nome.includes(salaId) || localizacao.includes(salaId))) ||
+          (!!salaNome && (nome.includes(salaNome) || localizacao.includes(salaNome) || salaNome.includes(nome) || salaNome.includes(localizacao)))
+        );
+      }) ||
+      null
+    );
+  }, [cameras]);
+  const getControladorForSalaConfig = useCallback((sala: SalaCatalogConfig) => {
+    if (!controladoresSala.length) return null;
+
+    const base = controladoresSala.filter((controlador) => normalizeText(String(controlador.status || 'ativo')) !== 'inativo');
+    const universoBusca = base.length ? base : controladoresSala;
+    const salaId = normalizeSalaId(sala.id) || normalizeSalaId(sala.codigo) || null;
+    const salaNome = normalizeText(sala.nome || '');
+
+    return (
+      universoBusca.find((controlador) => normalizeSalaId(controlador.sala_id) === salaId) ||
+      universoBusca.find((controlador) => {
+        const nome = normalizeText(controlador.nome || '');
+        const localizacao = normalizeText(controlador.localizacao || '');
+        return (
+          (!!salaId && (nome.includes(salaId) || localizacao.includes(salaId))) ||
+          (!!salaNome && (nome.includes(salaNome) || localizacao.includes(salaNome) || salaNome.includes(nome) || salaNome.includes(localizacao)))
+        );
+      }) ||
+      null
+    );
+  }, [controladoresSala]);
+  const salasComCameraSemTelemetria = useMemo(() => {
+    const salasOperacionaisIds = new Set(salasOperacionais.map((sala) => normalizeSalaId(sala.salaId)).filter(Boolean));
+
+    return salasCatalogo
+      .filter((sala) => sala.ativa !== false)
+      .map((sala) => ({
+        sala,
+        camera: getCameraForSalaConfig(sala),
+        controlador: getControladorForSalaConfig(sala),
+      }))
+      .filter((item) => item.camera && !salasOperacionaisIds.has(normalizeSalaId(item.sala.id)))
+      .sort((a, b) => {
+        const streamDiff = Number(hasCameraStream(b.camera)) - Number(hasCameraStream(a.camera));
+        if (streamDiff !== 0) return streamDiff;
+        return a.sala.nome.localeCompare(b.sala.nome, 'pt-BR');
+      });
+  }, [getCameraForSalaConfig, getControladorForSalaConfig, salasCatalogo, salasOperacionais]);
 
   const controladorDialogBody = controladorSelecionado ? (
     <div className="mt-4 space-y-4">
@@ -1964,6 +2070,101 @@ export function Seguranca() {
           )}
         </div>
       </section>
+
+      {salasComCameraSemTelemetria.length > 0 && (
+        <section className="security-rooms-section">
+          <div className="security-details__head">
+            <h3 className="security-section-title security-section-title--sm">Salas com câmera vinculada</h3>
+            <p className="security-section-copy">Estas salas já têm câmera preparada, mas ainda aguardam a primeira leitura de sensor para entrar no monitoramento operacional principal.</p>
+          </div>
+
+          <div className="security-room-grid">
+            {salasComCameraSemTelemetria.map(({ sala, camera, controlador }) => (
+              <article key={`camera-only-${sala.id}`} className="security-room-card security-room-card--ok">
+                <header className="security-room-card__header">
+                  <div className="security-room-card__header-main">
+                    <h3 className="security-room-card__name">{sala.nome}</h3>
+                    <div className="security-room-card__badges">
+                      <span className="security-room-card__status security-room-card__status--ok">
+                        Aguardando telemetria
+                      </span>
+                      <span className="security-room-card__lot-chip">
+                        {camera?.status || 'Status não informado'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <span className="security-room-card__status-icon security-room-card__status-icon--ok" aria-hidden="true">
+                    <Camera className="h-4 w-4" />
+                  </span>
+                </header>
+
+                <div className="security-room-card__alert security-room-card__alert--ok">
+                  <div className="security-room-card__alert-main">
+                    <span className="security-room-card__alert-label">Preparação concluída</span>
+                    <strong className="security-room-card__alert-title">
+                      {camera?.nome || 'Câmera vinculada'}
+                    </strong>
+                  </div>
+                  <span className="security-room-card__alert-time">Sem sensor online</span>
+                </div>
+
+                <div className="security-room-card__impact">
+                  <div className="security-room-card__impact-grid">
+                    <div className="security-room-card__impact-item">
+                      <span className="security-room-card__impact-label">Sala</span>
+                      <strong className="security-room-card__impact-value">{sala.codigo || sala.id}</strong>
+                    </div>
+                    <div className="security-room-card__impact-item">
+                      <span className="security-room-card__impact-label">Feed</span>
+                      <strong className="security-room-card__impact-value">
+                        {hasCameraStream(camera) ? 'Disponível' : 'Sem URL'}
+                      </strong>
+                    </div>
+                  </div>
+                  <p className="security-room-card__impact-copy">
+                    {hasCameraStream(camera)
+                      ? `A câmera ${camera?.nome || ''} já pode ser aberta e configurada mesmo antes da primeira leitura ambiental.`
+                      : 'Vincule uma URL de câmera para habilitar visualização e configuração desta sala.'}
+                  </p>
+                </div>
+
+                <div className="security-room-card__actions">
+                  <Button
+                    onClick={() => abrirControlePorConfig(controlador)}
+                    disabled={!controlador}
+                    className="security-room-card__primary-action security-room-card__primary-action--ok"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                    {controlador ? 'Controlar sala' : 'Sem controle'}
+                  </Button>
+
+                  <div className="security-room-card__secondary-actions">
+                    <Button
+                      variant="outline"
+                      onClick={() => abrirCamera(camera)}
+                      disabled={!camera}
+                      className="security-room-card__secondary-action"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      Ver câmera
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => abrirConfiguracaoCamera(camera)}
+                      disabled={!camera}
+                      className="security-room-card__secondary-action"
+                    >
+                      <SlidersHorizontal className="h-3.5 w-3.5" />
+                      Configurar
+                    </Button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="security-recommendations">
         <div className="security-recommendations__header">
