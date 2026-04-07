@@ -108,6 +108,7 @@ interface CameraConfig {
   url_stream?: string | null;
   resolucao?: string | null;
   gravacao_ativa?: boolean | null;
+  planned_placeholder?: boolean;
 }
 
 interface SalaControllerConfig {
@@ -222,8 +223,54 @@ const DEFAULT_CAMERA_IMAGE_CONTROLS: CameraImageControls = {
   exposureCtrl: true,
 };
 
+const PLANNED_VISION_CAMERAS: CameraConfig[] = [
+  {
+    id: 'planned-camera-colonizacao',
+    nome: 'camera-colonizacao',
+    localizacao: 'Colonizacao',
+    tipo: 'Sala de Cultivo',
+    status: 'Planejada',
+    url_stream: null,
+    resolucao: 'VGA',
+    gravacao_ativa: false,
+    planned_placeholder: true,
+  },
+  {
+    id: 'planned-camera-frutificacao',
+    nome: 'camera-frutificacao',
+    localizacao: 'Frutificacao',
+    tipo: 'Sala de Cultivo',
+    status: 'Planejada',
+    url_stream: null,
+    resolucao: 'VGA',
+    gravacao_ativa: false,
+    planned_placeholder: true,
+  },
+];
+
 function hasCameraStream(camera: CameraConfig | null | undefined) {
   return !!camera?.url_stream && camera.url_stream.trim().length > 0;
+}
+
+function prepareCameraList(cameras: CameraConfig[]) {
+  const merged = [...cameras];
+
+  for (const plannedCamera of PLANNED_VISION_CAMERAS) {
+    const alreadyExists = merged.some((camera) => {
+      const normalizedName = normalizeText(String(camera.nome || ''));
+      const normalizedLocation = normalizeText(String(camera.localizacao || ''));
+      return (
+        normalizedName === normalizeText(plannedCamera.nome) ||
+        normalizedLocation === normalizeText(plannedCamera.localizacao)
+      );
+    });
+
+    if (!alreadyExists) {
+      merged.push(plannedCamera);
+    }
+  }
+
+  return merged.sort((a, b) => String(a.localizacao || '').localeCompare(String(b.localizacao || ''), 'pt-BR'));
 }
 
 function normalizeText(value: string) {
@@ -677,10 +724,10 @@ export function Seguranca() {
       setLotes(sensores);
 
       if (camerasResult.status === 'fulfilled') {
-        setCameras((camerasResult.value.cameras || []) as CameraConfig[]);
+        setCameras(prepareCameraList((camerasResult.value.cameras || []) as CameraConfig[]));
       } else {
         console.warn('Não foi possível carregar câmeras:', camerasResult.reason);
-        setCameras([]);
+        setCameras(prepareCameraList([]));
       }
 
       if (controladoresResult.status === 'fulfilled') {
@@ -693,7 +740,7 @@ export function Seguranca() {
       console.error('Erro ao carregar monitoramento de sensores:', error);
       setErrorMessage(error.message || 'Erro ao carregar sensores');
       setLotes([]);
-      setCameras([]);
+      setCameras(prepareCameraList([]));
       setControladoresSala([]);
     } finally {
       setLoading(false);

@@ -1,0 +1,136 @@
+{
+  "executed_at": "2026-04-07T17:40:52.801569+00:00",
+  "mode": "yolov8",
+  "image_path": "vision/storage/artifacts/2026/04/07/snapshot_20260407T174049313508Z.jpg",
+  "lote_id": null,
+  "capture_metadata": {
+    "captured_at": "2026-04-07T17:40:49.313331+00:00",
+    "camera_url": "http://10.0.0.163/capture",
+    "http_status": 200,
+    "content_type": "image/jpeg",
+    "size_bytes": 17966,
+    "source": "esp32-cam",
+    "capture_attempt": 1,
+    "capture_attempts_total": 3,
+    "request_timeout_seconds": 15,
+    "connect_timeout_seconds": 5.0,
+    "read_timeout_seconds": 15.0,
+    "capture_attempt_duration_seconds": 0.044,
+    "config_name": "vision_config_frutificacao.json",
+    "room_name": "Frutificacao",
+    "camera_name": "camera-frutificacao",
+    "camera_status": "online",
+    "model_path": "/Users/fabiodalponte/Workspace/shroom-app/vision/models/block_detector_v2.pt",
+    "model_version": "v2",
+    "used_fallback": false,
+    "last_error": null
+  },
+  "config_name": "vision_config_frutificacao.json",
+  "room_name": "Frutificacao",
+  "camera_name": "camera-frutificacao",
+  "camera_status": "online",
+  "quality_check": {
+    "status": "too_blurry",
+    "dataset_eligible": false,
+    "metrics": {
+      "resolution": {
+        "width": 640,
+        "height": 480,
+        "total_pixels": 307200
+      },
+      "brightness_mean": 85.65,
+      "contrast_stddev": 73.93,
+      "sharpness_score": 5.09
+    },
+    "flags": {
+      "low_resolution": false,
+      "too_dark": false,
+      "too_bright": false,
+      "too_blurry": true,
+      "invalid_image": false
+    },
+    "thresholds": {
+      "min_width": 640,
+      "min_height": 480,
+      "too_dark_below": 55.0,
+      "too_bright_above": 210.0,
+      "too_blurry_below": 12.0
+    },
+    "error": null
+  },
+  "block_detection": {
+    "enabled": true,
+    "model": "/Users/fabiodalponte/Workspace/shroom-app/vision/models/block_detector_v2.pt",
+    "model_path": "/Users/fabiodalponte/Workspace/shroom-app/vision/models/block_detector_v2.pt",
+    "model_version": "v2",
+    "used_fallback": false,
+    "requested_model_path": "/Users/fabiodalponte/Workspace/shroom-app/vision/models/block_detector_v2.pt",
+    "fallback_model_path": "/Users/fabiodalponte/Workspace/shroom-app/vision/models/block_detector.pt",
+    "device": "cpu",
+    "blocos_detectados": 0,
+    "detections": [],
+    "error": null,
+    "python_executable": "/usr/local/bin/python3",
+    "python_version": "3.11.6 (v3.11.6:8b6ee5ba3b, Oct  2 2023, 11:18:21) [Clang 13.0.0 (clang-1300.0.29.30)]"
+  },
+  "model_version": "v2",
+  "model_path": "/Users/fabiodalponte/Workspace/shroom-app/vision/models/block_detector_v2.pt",
+  "used_fallback": false,
+  "last_error": "missing SUPABASE_URL, SUPABASE_KEY or SUPABASE_STORAGE_BUCKET",
+  "summary": {
+    "lote_id": null,
+    "config_name": "vision_config_frutificacao.json",
+    "room_name": "Frutificacao",
+    "camera_name": "camera-frutificacao",
+    "camera_status": "online",
+    "blocos_detectados": 0,
+    "confianca_media_blocos": null,
+    "block_detection_error": null,
+    "model_version": "v2",
+    "model_path": "/Users/fabiodalponte/Workspace/shroom-app/vision/models/block_detector_v2.pt",
+    "used_fallback": false,
+    "last_error": "missing SUPABASE_URL, SUPABASE_KEY or SUPABASE_STORAGE_BUCKET",
+    "contaminacao_visual_detectada": false,
+    "colonizacao_estimada": null,
+    "quality_status": "too_blurry",
+    "dataset_eligible": false,
+    "dataset_class": "rejected/too_blurry",
+    "remote_persisted": false
+  },
+  "detections": [],
+  "notes": [
+    "Pipeline executado com quality check local e detector inicial de blocos.",
+    "A deteccao de colonizacao e contaminacao_visual ainda nao esta implementada.",
+    "Se o modelo YOLO nao existir, a deteccao retorna lista vazia sem quebrar o fluxo."
+  ],
+  "target_labels": [
+    "bloco",
+    "colonizacao",
+    "contaminacao_visual"
+  ],
+  "dataset_classification": {
+    "enabled": true,
+    "applied": true,
+    "dataset_class": "rejected/too_blurry",
+    "quality_status": "too_blurry",
+    "dataset_eligible": false,
+    "target_image_path": "vision/dataset/raw/rejected/too_blurry/snapshot_20260407T174049313508Z.jpg",
+    "target_metadata_path": "vision/dataset/raw/rejected/too_blurry/snapshot_20260407T174049313508Z.json",
+    "method": "hardlink",
+    "error": null
+  },
+  "remote_persistence": {
+    "enabled": true,
+    "remote_persisted": false,
+    "storage_uploaded": false,
+    "db_record_created": false,
+    "image_storage_path": null,
+    "record_id": null,
+    "db_table": "vision_pipeline_runs",
+    "retry_manifest_path": null,
+    "error": "missing SUPABASE_URL, SUPABASE_KEY or SUPABASE_STORAGE_BUCKET"
+  },
+  "remote_persisted": false,
+  "storage_uploaded": false,
+  "db_record_created": false
+}

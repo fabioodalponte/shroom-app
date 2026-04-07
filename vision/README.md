@@ -287,6 +287,15 @@ Se quiser usar outro arquivo de configuracao:
 ./vision/scripts/test_capture.sh /caminho/para/vision_config.json
 ```
 
+Para operar duas salas sem mexer no legado:
+
+```bash
+./vision/scripts/test_capture.sh vision/config/vision_config_colonizacao.json
+./vision/scripts/test_capture.sh vision/config/vision_config_frutificacao.json
+```
+
+O arquivo `vision/config/vision_config.json` pode continuar apontando para a camera antiga.
+
 Para processar apenas a ultima imagem capturada:
 
 ```bash
@@ -340,6 +349,22 @@ Comportamento:
 1. cada tentativa e logada separadamente
 2. falhas intermitentes nao derrubam o pipeline na primeira tentativa
 3. se todas as tentativas falharem, o erro final consolida os motivos por tentativa
+
+## Estrategia para duas cameras
+
+Para rodar `colonizacao` e `frutificacao` sem quebrar a camera antiga:
+
+1. mantenha `vision/config/vision_config.json` como legado
+2. configure `vision/config/vision_config_colonizacao.json`
+3. configure `vision/config/vision_config_frutificacao.json`
+4. execute cada pipeline com `--config` ou usando os wrappers existentes
+
+Exemplos:
+
+```bash
+./vision/scripts/pipeline_once.sh vision/config/vision_config_colonizacao.json
+./vision/scripts/pipeline_once.sh vision/config/vision_config_frutificacao.json
+```
 
 ## Captura automatica com iluminacao
 

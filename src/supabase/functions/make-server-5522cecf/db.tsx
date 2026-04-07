@@ -1991,6 +1991,16 @@ const VISION_STORAGE_BUCKET =
   Deno.env.get('VISION_STORAGE_BUCKET') ||
   DEFAULT_VISION_STORAGE_BUCKET;
 const VISION_PREVIEW_URL_EXPIRES_IN = 60 * 60;
+const PLANNED_VISION_CAMERA_CONFIGS: Record<string, { room_name: string; config_name: string }> = {
+  'camera-colonizacao': {
+    room_name: 'Colonizacao',
+    config_name: 'vision_config_colonizacao.json',
+  },
+  'camera-frutificacao': {
+    room_name: 'Frutificacao',
+    config_name: 'vision_config_frutificacao.json',
+  },
+};
 
 function resolveVisionStorageBucket(run: any) {
   return (
@@ -2009,12 +2019,12 @@ async function attachVisionPreviewUrl(run: any) {
   const storageBucket = resolveVisionStorageBucket(run);
 
   if (!run.image_storage_path || !storageBucket) {
-    return {
+    return attachVisionDerivedFields({
       ...run,
       storage_bucket: storageBucket || null,
       preview_url: null,
       preview_expires_in_seconds: null,
-    };
+    });
   }
 
   const { data, error } = await supabase
@@ -2024,21 +2034,21 @@ async function attachVisionPreviewUrl(run: any) {
 
   if (error) {
     console.error('Erro ao criar signed URL da captura vision:', error);
-    return {
+    return attachVisionDerivedFields({
       ...run,
       storage_bucket: storageBucket,
       preview_url: null,
       preview_expires_in_seconds: null,
       preview_error: error.message,
-    };
+    });
   }
 
-  return {
+  return attachVisionDerivedFields({
     ...run,
     storage_bucket: storageBucket,
     preview_url: data?.signedUrl || null,
     preview_expires_in_seconds: VISION_PREVIEW_URL_EXPIRES_IN,
-  };
+  });
 }
 
 function normalizeTimelapseText(value?: string | null) {
@@ -2185,6 +2195,8 @@ function getVisionRunModelPath(run: any) {
   return (
     run?.raw_result_json?.block_detection?.model_path ||
     run?.raw_result_json?.block_detection?.model ||
+    run?.raw_result_json?.model_path ||
+    run?.raw_result_json?.summary?.model_path ||
     run?.summary_json?.model_path ||
     null
   );
@@ -2193,9 +2205,93 @@ function getVisionRunModelPath(run: any) {
 function getVisionRunModelVersion(run: any) {
   return (
     run?.raw_result_json?.block_detection?.model_version ||
+    run?.raw_result_json?.model_version ||
+    run?.raw_result_json?.summary?.model_version ||
     run?.summary_json?.model_version ||
     null
   );
+}
+
+function getVisionRunConfigName(run: any) {
+  return (
+    run?.raw_result_json?.config_name ||
+    run?.raw_result_json?.summary?.config_name ||
+    run?.summary_json?.config_name ||
+    null
+  );
+}
+
+function getVisionRunCameraName(run: any) {
+  return (
+    run?.raw_result_json?.camera_name ||
+    run?.raw_result_json?.capture_metadata?.camera_name ||
+    run?.raw_result_json?.summary?.camera_name ||
+    run?.summary_json?.camera_name ||
+    null
+  );
+}
+
+function getVisionRunRoomName(run: any) {
+  return (
+    run?.raw_result_json?.room_name ||
+    run?.raw_result_json?.capture_metadata?.room_name ||
+    run?.raw_result_json?.summary?.room_name ||
+    run?.summary_json?.room_name ||
+    null
+  );
+}
+
+function getVisionRunCameraStatus(run: any) {
+  return (
+    run?.raw_result_json?.camera_status ||
+    run?.raw_result_json?.summary?.camera_status ||
+    run?.summary_json?.camera_status ||
+    null
+  );
+}
+
+function getVisionRunUsedFallback(run: any) {
+  const candidate =
+    run?.raw_result_json?.used_fallback ??
+    run?.raw_result_json?.summary?.used_fallback ??
+    run?.raw_result_json?.block_detection?.used_fallback ??
+    run?.summary_json?.used_fallback;
+
+  return typeof candidate === 'boolean' ? candidate : null;
+}
+
+function getVisionRunLastError(run: any) {
+  return (
+    run?.raw_result_json?.last_error ||
+    run?.raw_result_json?.summary?.last_error ||
+    run?.summary_json?.last_error ||
+    run?.raw_result_json?.block_detection?.error ||
+    run?.raw_result_json?.quality_check?.error ||
+    run?.raw_result_json?.remote_persistence?.error ||
+    run?.preview_error ||
+    null
+  );
+}
+
+function attachVisionDerivedFields(run: any) {
+  if (!run) return null;
+
+  const cameraName = String(getVisionRunCameraName(run) || '').trim() || null;
+  const plannedConfig = cameraName ? PLANNED_VISION_CAMERA_CONFIGS[cameraName] || null : null;
+  const lastError = getVisionRunLastError(run);
+  const explicitCameraStatus = getVisionRunCameraStatus(run);
+
+  return {
+    ...run,
+    camera_name: cameraName,
+    room_name: getVisionRunRoomName(run) || plannedConfig?.room_name || null,
+    config_name: getVisionRunConfigName(run) || plannedConfig?.config_name || null,
+    model_path: getVisionRunModelPath(run),
+    model_version: getVisionRunModelVersion(run),
+    used_fallback: getVisionRunUsedFallback(run),
+    camera_status: explicitCameraStatus || (lastError ? 'degraded' : 'online'),
+    last_error_summary: lastError,
+  };
 }
 
 function sortVisionRunsByTimestampDesc(runs: any[]) {

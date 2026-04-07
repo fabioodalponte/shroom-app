@@ -106,19 +106,40 @@ class VisionInferencePipeline:
         quality_check = self.analyze_image_quality(image_path)
         block_detection = self.detect_blocks(image_path)
         average_detection_confidence = calculate_average_detection_confidence(block_detection["detections"])
+        last_error = (
+            quality_check.get("error")
+            or block_detection.get("error")
+            or None
+        )
         return {
             "executed_at": datetime.now(timezone.utc).isoformat(),
             "mode": self.mode,
             "image_path": str(image_path),
             "lote_id": lote_id,
             "capture_metadata": capture_metadata,
+            "config_name": capture_metadata.get("config_name"),
+            "room_name": capture_metadata.get("room_name"),
+            "camera_name": capture_metadata.get("camera_name"),
+            "camera_status": capture_metadata.get("camera_status"),
             "quality_check": quality_check,
             "block_detection": block_detection,
+            "model_version": block_detection.get("model_version"),
+            "model_path": block_detection.get("model_path"),
+            "used_fallback": bool(block_detection.get("used_fallback", False)),
+            "last_error": last_error,
             "summary": {
                 "lote_id": lote_id,
+                "config_name": capture_metadata.get("config_name"),
+                "room_name": capture_metadata.get("room_name"),
+                "camera_name": capture_metadata.get("camera_name"),
+                "camera_status": capture_metadata.get("camera_status"),
                 "blocos_detectados": block_detection["blocos_detectados"],
                 "confianca_media_blocos": average_detection_confidence,
                 "block_detection_error": block_detection.get("error"),
+                "model_version": block_detection.get("model_version"),
+                "model_path": block_detection.get("model_path"),
+                "used_fallback": bool(block_detection.get("used_fallback", False)),
+                "last_error": last_error,
                 "contaminacao_visual_detectada": False,
                 "colonizacao_estimada": None,
                 "quality_status": quality_check["status"],

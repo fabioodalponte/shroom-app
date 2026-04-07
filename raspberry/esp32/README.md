@@ -5,6 +5,7 @@ Arquivo versionado:
 1. `sala1_mqtt_bridge.ino`
 2. `esp32_cam_capture.ino`
 3. `esp32_relay_controller.ino`
+4. `vision_cam_s3/vision_cam_s3.ino`
 
 ## Objetivo
 
@@ -74,6 +75,30 @@ curl -s http://IP_DA_CAMERA/health
 ```
 
 Se o `/capture` responder `200`, voce pode apontar o cloudflared para `http://IP_DA_CAMERA`.
+
+## ESP32-CAM S3 (Vision padronizado)
+
+Pasta: `vision_cam_s3/`
+
+Esse firmware novo foi separado do legado para nao quebrar a camera atual.
+
+Objetivo:
+
+1. usar `GET /capture` com o pipeline Vision atual
+2. expor `GET /status` com diagnostico operacional
+3. manter reconnect de Wi-Fi e watchdog
+4. permitir uma camera para `Colonizacao` e outra para `Frutificacao`
+
+Arquivos principais:
+
+1. `vision_cam_s3/vision_cam_s3.ino`
+2. `vision_cam_s3/camera_board_pins.h`
+3. `vision_cam_s3/device_config_colonizacao.example.h`
+4. `vision_cam_s3/device_config_frutificacao.example.h`
+
+Guia completo:
+
+1. `vision_cam_s3/README.md`
 
 ## ESP32 Relay Controller (HW-316 / Sala 1)
 

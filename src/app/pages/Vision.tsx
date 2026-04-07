@@ -28,6 +28,14 @@ interface VisionRun {
   executed_at: string;
   captured_at?: string | null;
   source?: string | null;
+  config_name?: string | null;
+  room_name?: string | null;
+  camera_name?: string | null;
+  camera_status?: string | null;
+  model_version?: string | null;
+  model_path?: string | null;
+  used_fallback?: boolean | null;
+  last_error_summary?: string | null;
   camera_url?: string | null;
   image_local_path?: string | null;
   image_storage_path?: string | null;
@@ -54,6 +62,46 @@ interface VisionDetection {
 
 type RemoteStatus = 'ok' | 'failed' | 'pending';
 type VisionTone = 'ok' | 'warning' | 'critical' | 'neutral';
+type CameraHealthStatus = 'online' | 'degraded' | 'offline' | 'unknown';
+
+interface PlannedVisionCamera {
+  cameraName: string;
+  roomName: string;
+  configName: string;
+  defaultModelVersion: string;
+}
+
+interface VisionCameraObservabilityCard {
+  cameraName: string;
+  roomName: string;
+  configName: string;
+  status: CameraHealthStatus;
+  hasHistory: boolean;
+  modelVersion: string;
+  modelPath: string | null;
+  usedFallback: boolean;
+  lastSuccessLabel: string;
+  lastSuccessTimestamp: string;
+  lastFailureLabel: string;
+  lastFailureTimestamp: string;
+  consecutiveFailures: number;
+  lastErrorSummary: string;
+}
+
+const PLANNED_VISION_CAMERAS: PlannedVisionCamera[] = [
+  {
+    cameraName: 'camera-colonizacao',
+    roomName: 'Colonizacao',
+    configName: 'vision_config_colonizacao.json',
+    defaultModelVersion: 'v2',
+  },
+  {
+    cameraName: 'camera-frutificacao',
+    roomName: 'Frutificacao',
+    configName: 'vision_config_frutificacao.json',
+    defaultModelVersion: 'v2',
+  },
+];
 
 const QUALITY_STATUS_LABELS: Record<string, string> = {
   valid: 'Valida',
@@ -243,18 +291,237 @@ function getVisionQualityHeadline(status?: string | null) {
 
 function getRunCaptureLabel(run?: VisionRun | null) {
   if (!run) return 'Captura não selecionada';
-  const source = run.source || run.camera_url || 'vision-pipeline';
+  const source = run.camera_name || run.source || run.camera_url || 'vision-pipeline';
   return source;
 }
 
 function getRunRoomLabel(run?: VisionRun | null) {
   const room =
+    run?.room_name ||
     run?.summary_json?.sala ||
     run?.summary_json?.room ||
     run?.raw_result_json?.sala ||
     run?.raw_result_json?.room ||
     null;
   return room ? String(room) : 'Sala não informada';
+}
+
+function getRunConfigLabel(run?: VisionRun | null) {
+  const configName =
+    run?.config_name ||
+    run?.summary_json?.config_name ||
+    run?.raw_result_json?.config_name ||
+    run?.raw_result_json?.summary?.config_name ||
+    null;
+
+  return configName ? String(configName) : 'vision_config.json';
+}
+
+function getRunModelVersionLabel(run?: VisionRun | null) {
+  const modelVersion =
+    run?.model_version ||
+    run?.summary_json?.model_version ||
+    run?.raw_result_json?.model_version ||
+    run?.raw_result_json?.summary?.model_version ||
+    run?.raw_result_json?.block_detection?.model_version ||
+    null;
+
+  return modelVersion ? String(modelVersion) : 'N/D';
+}
+
+function getRunModelPathLabel(run?: VisionRun | null) {
+  const modelPath =
+    run?.model_path ||
+    run?.summary_json?.model_path ||
+    run?.raw_result_json?.model_path ||
+    run?.raw_result_json?.summary?.model_path ||
+    run?.raw_result_json?.block_detection?.model_path ||
+    null;
+
+  return modelPath ? String(modelPath) : null;
+}
+
+function getRunLastErrorSummary(run?: VisionRun | null) {
+  const candidates = [
+    run?.last_error_summary,
+    run?.preview_error,
+    run?.raw_result_json?.last_error,
+    run?.raw_result_json?.summary?.last_error,
+    run?.raw_result_json?.block_detection?.error,
+    run?.raw_result_json?.quality_check?.error,
+    run?.raw_result_json?.remote_persistence?.error,
+  ];
+
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim();
+    if (text) {
+      return text.length > 96 ? `${text.slice(0, 93)}...` : text;
+    }
+  }
+
+  return 'Sem erro recente';
+}
+
+function getRunTimestampValue(run?: VisionRun | null) {
+  return run?.captured_at || run?.executed_at || null;
+}
+
+function sortRunsByTimestampDesc(runs: VisionRun[]) {
+  return [...runs].sort((a, b) => {
+    const aTime = new Date(getRunTimestampValue(a) || 0).getTime();
+    const bTime = new Date(getRunTimestampValue(b) || 0).getTime();
+    return bTime - aTime;
+  });
+}
+
+function isRunFailureLike(run?: VisionRun | null) {
+  if (!run) return false;
+
+  const qualityStatus = String(run.quality_status || '').trim().toLowerCase();
+  if (['invalid_image', 'too_dark', 'too_bright', 'too_blurry', 'low_resolution'].includes(qualityStatus)) {
+    return true;
+  }
+
+  if (run.camera_status === 'offline' || run.camera_status === 'degraded') {
+    return true;
+  }
+
+  if (Boolean(run.used_fallback)) {
+    return true;
+  }
+
+  if (getRemoteStatus(run) === 'failed') {
+    return true;
+  }
+
+  return getRunLastErrorSummary(run) !== 'Sem erro recente';
+}
+
+function getCameraHealthStatusLabel(status: CameraHealthStatus) {
+  if (status === 'online') return 'Online';
+  if (status === 'degraded') return 'Degraded';
+  if (status === 'offline') return 'Offline';
+  return 'Unknown';
+}
+
+function getCameraHealthBadgeClassName(status: CameraHealthStatus) {
+  if (status === 'online') return 'vision-pill--valid';
+  if (status === 'degraded') return 'vision-pill--warning';
+  if (status === 'offline') return 'vision-pill--critical';
+  return 'vision-pill--neutral';
+}
+
+function normalizeCameraHealthStatus(value?: string | null): CameraHealthStatus {
+  if (value === 'online' || value === 'degraded' || value === 'offline' || value === 'unknown') {
+    return value;
+  }
+  return 'unknown';
+}
+
+function getCameraHealthDescription(status: CameraHealthStatus, hasHistory: boolean) {
+  if (!hasHistory) return 'Aguardando primeira captura persistida';
+  if (status === 'online') return 'Captura recente e leitura operacional estável';
+  if (status === 'degraded') return 'Última leitura com alerta ou atraso operacional';
+  if (status === 'offline') return 'Sem sinal recente ou câmera fora da janela esperada';
+  return 'Sem histórico suficiente para classificar a câmera';
+}
+
+function getFallbackLabel(value?: boolean | null) {
+  return value ? 'Sim' : 'Não';
+}
+
+function getRunProcessingTimeSeconds(run?: VisionRun | null) {
+  const explicitCandidates = [
+    run?.raw_result_json?.duration_seconds,
+    run?.raw_result_json?.summary?.duration_seconds,
+    run?.raw_result_json?.processing_seconds,
+    run?.summary_json?.duration_seconds,
+  ];
+
+  for (const candidate of explicitCandidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric >= 0) {
+      return numeric;
+    }
+  }
+
+  const capturedAt = run?.captured_at ? new Date(run.captured_at).getTime() : NaN;
+  const executedAt = run?.executed_at ? new Date(run.executed_at).getTime() : NaN;
+  if (Number.isFinite(capturedAt) && Number.isFinite(executedAt) && executedAt >= capturedAt) {
+    return Number(((executedAt - capturedAt) / 1000).toFixed(1));
+  }
+
+  return null;
+}
+
+function formatDurationSeconds(value?: number | null) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return 'N/D';
+  }
+
+  if (value < 1) return `${value.toFixed(2)}s`;
+  if (value < 10) return `${value.toFixed(1)}s`;
+  return `${Math.round(value)}s`;
+}
+
+function buildCameraObservabilityCards(runs: VisionRun[]): VisionCameraObservabilityCard[] {
+  const now = Date.now();
+
+  return PLANNED_VISION_CAMERAS.map((plannedCamera) => {
+    const matchingRuns = sortRunsByTimestampDesc(
+      runs.filter((run) => {
+        const runCameraName = String(run.camera_name || '').trim().toLowerCase();
+        const runRoomName = String(run.room_name || '').trim().toLowerCase();
+        return (
+          runCameraName === plannedCamera.cameraName.toLowerCase() ||
+          runRoomName === plannedCamera.roomName.toLowerCase()
+        );
+      }),
+    );
+
+    const latestRun = matchingRuns[0] || null;
+    const lastSuccessRun = matchingRuns.find((run) => !isRunFailureLike(run)) || null;
+    const lastFailureRun = matchingRuns.find((run) => isRunFailureLike(run)) || null;
+
+    let consecutiveFailures = 0;
+    for (const run of matchingRuns) {
+      if (!isRunFailureLike(run)) break;
+      consecutiveFailures += 1;
+    }
+
+    let status: CameraHealthStatus = 'unknown';
+    if (latestRun) {
+      const latestTimestamp = new Date(getRunTimestampValue(latestRun) || 0).getTime();
+      const ageHours = Number.isFinite(latestTimestamp) ? (now - latestTimestamp) / (1000 * 60 * 60) : Infinity;
+
+      if (latestRun.camera_status === 'offline' || ageHours > 24) {
+        status = 'offline';
+      } else if (latestRun.camera_status === 'unknown') {
+        status = 'unknown';
+      } else if (isRunFailureLike(latestRun) || ageHours > 6) {
+        status = 'degraded';
+      } else {
+        status = 'online';
+      }
+    }
+
+    return {
+      cameraName: plannedCamera.cameraName,
+      roomName: latestRun?.room_name || plannedCamera.roomName,
+      configName: latestRun?.config_name || plannedCamera.configName,
+      status,
+      hasHistory: matchingRuns.length > 0,
+      modelVersion: getRunModelVersionLabel(latestRun) !== 'N/D' ? getRunModelVersionLabel(latestRun) : plannedCamera.defaultModelVersion,
+      modelPath: getRunModelPathLabel(latestRun),
+      usedFallback: Boolean(latestRun?.used_fallback),
+      lastSuccessLabel: lastSuccessRun ? getRelativeDateTime(getRunTimestampValue(lastSuccessRun)) : 'Sem sucesso registrado',
+      lastSuccessTimestamp: lastSuccessRun ? formatDateTime(getRunTimestampValue(lastSuccessRun)) : 'Aguardando primeira captura',
+      lastFailureLabel: lastFailureRun ? getRelativeDateTime(getRunTimestampValue(lastFailureRun)) : 'Sem falha registrada',
+      lastFailureTimestamp: lastFailureRun ? formatDateTime(getRunTimestampValue(lastFailureRun)) : 'Nenhum erro persistido',
+      consecutiveFailures,
+      lastErrorSummary: lastFailureRun ? getRunLastErrorSummary(lastFailureRun) : 'Sem erro recente',
+    };
+  });
 }
 
 function getRunLotLabel(run?: VisionRun | null) {
@@ -660,6 +927,65 @@ export function Vision() {
     () => formatDateTime(featuredRun?.captured_at || featuredRun?.executed_at),
     [featuredRun?.captured_at, featuredRun?.executed_at],
   );
+  const featuredCameraStatus = useMemo(
+    () => normalizeCameraHealthStatus(featuredRun?.camera_status),
+    [featuredRun?.camera_status],
+  );
+  const featuredProcessingTime = useMemo(
+    () => getRunProcessingTimeSeconds(featuredRun),
+    [featuredRun],
+  );
+  const featuredFallbackUsed = Boolean(featuredRun?.used_fallback);
+  const featuredLastErrorSummary = useMemo(
+    () => getRunLastErrorSummary(featuredRun),
+    [featuredRun],
+  );
+  const featuredTopStats = useMemo(
+    () => [
+      {
+        label: 'Sala',
+        value: getRunRoomLabel(featuredRun),
+        meta: getRunConfigLabel(featuredRun),
+      },
+      {
+        label: 'Camera',
+        value: getRunCaptureLabel(featuredRun),
+        meta: `Capture #${featuredRun?.id?.slice(0, 8) || 'VIS-0000'}`,
+      },
+      {
+        label: 'Status',
+        value: getCameraHealthStatusLabel(featuredCameraStatus),
+        meta: getCameraHealthDescription(featuredCameraStatus, Boolean(featuredRun)),
+        tone: featuredCameraStatus,
+      },
+      {
+        label: 'Modelo ativo',
+        value: getRunModelVersionLabel(featuredRun),
+        meta: getRunModelPathLabel(featuredRun) || 'Modelo ainda nao confirmado por run persistido',
+      },
+      {
+        label: 'Blocos detectados',
+        value: String(featuredDetectedBlocks),
+        meta: featuredConfidenceLabel ? `Confianca media ${featuredConfidenceLabel}` : 'Confianca media indisponivel',
+      },
+    ],
+    [featuredCameraStatus, featuredConfidenceLabel, featuredDetectedBlocks, featuredRun],
+  );
+  const observabilityRuns = useMemo(() => {
+    const merged = new Map<string, VisionRun>();
+
+    for (const run of [latestRun, ...recentRuns]) {
+      if (run?.id) {
+        merged.set(run.id, run);
+      }
+    }
+
+    return sortRunsByTimestampDesc(Array.from(merged.values()));
+  }, [latestRun, recentRuns]);
+  const cameraObservabilityCards = useMemo(
+    () => buildCameraObservabilityCards(observabilityRuns),
+    [observabilityRuns],
+  );
 
   useEffect(() => {
     setFeaturedImageSize(null);
@@ -737,6 +1063,23 @@ export function Vision() {
             </div>
           </header>
 
+          <section className="vision-top-strip">
+            {featuredTopStats.map((item) => (
+              <article key={item.label} className="vision-top-strip__item">
+                <div className="vision-top-strip__label-row">
+                  <span className="vision-top-strip__label">{item.label}</span>
+                  {item.tone ? (
+                    <span className={cn('vision-pill', getCameraHealthBadgeClassName(item.tone))}>
+                      {item.value}
+                    </span>
+                  ) : null}
+                </div>
+                {!item.tone ? <strong className="vision-top-strip__value">{item.value}</strong> : null}
+                <p className="vision-top-strip__meta">{item.meta}</p>
+              </article>
+            ))}
+          </section>
+
           <section className="vision-filters">
             <Select value={qualityStatusFilter} onValueChange={setQualityStatusFilter}>
               <SelectTrigger className="vision-select">
@@ -776,6 +1119,66 @@ export function Vision() {
                 <SelectItem value="all">Sem corte</SelectItem>
               </SelectContent>
             </Select>
+          </section>
+
+          <section className="vision-observability">
+            <div className="vision-observability__header">
+              <div>
+                <p className="vision-section-label">Observabilidade das câmeras</p>
+                <h2 className="vision-observability__title">Colonização e frutificação prontas para entrada em operação</h2>
+              </div>
+              <p className="vision-observability__copy">
+                O app já acompanha as duas câmeras mesmo sem hardware online. Sem histórico persistido, o status fica em <strong>unknown</strong>.
+              </p>
+            </div>
+
+            <div className="vision-observability-grid">
+              {cameraObservabilityCards.map((cameraCard) => (
+                <article key={cameraCard.cameraName} className="vision-observability-card">
+                  <div className="vision-observability-card__header">
+                    <div>
+                      <div className="vision-observability-card__eyebrow">
+                        <span className={cn('vision-pill', getCameraHealthBadgeClassName(cameraCard.status))}>
+                          {getCameraHealthStatusLabel(cameraCard.status)}
+                        </span>
+                        <span className="vision-observability-card__config">{cameraCard.configName}</span>
+                        {!cameraCard.hasHistory ? <span className="vision-observability-card__hint">Sem historico</span> : null}
+                      </div>
+                      <h3 className="vision-observability-card__title">{cameraCard.cameraName}</h3>
+                      <p className="vision-observability-card__subtitle">{cameraCard.roomName}</p>
+                    </div>
+                    <div className="vision-observability-card__model">
+                      <span>Modelo ativo</span>
+                      <strong>{cameraCard.modelVersion}</strong>
+                      <small>Fallback {getFallbackLabel(cameraCard.usedFallback)}</small>
+                    </div>
+                  </div>
+
+                  <div className="vision-observability-card__grid">
+                    <div className="vision-observability-card__item">
+                      <span>Último sucesso</span>
+                      <strong>{cameraCard.lastSuccessLabel}</strong>
+                      <small>{cameraCard.lastSuccessTimestamp}</small>
+                    </div>
+                    <div className="vision-observability-card__item">
+                      <span>Última falha</span>
+                      <strong>{cameraCard.lastFailureLabel}</strong>
+                      <small>{cameraCard.lastFailureTimestamp}</small>
+                    </div>
+                    <div className="vision-observability-card__item">
+                      <span>Falhas consecutivas</span>
+                      <strong>{cameraCard.consecutiveFailures}</strong>
+                      <small>{cameraCard.modelPath || 'Modelo ainda não confirmado por run persistido'}</small>
+                    </div>
+                    <div className="vision-observability-card__item">
+                      <span>Último erro resumido</span>
+                      <strong>{cameraCard.lastErrorSummary}</strong>
+                      <small>{getCameraHealthDescription(cameraCard.status, cameraCard.hasHistory)}</small>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
           </section>
 
           {latestRun ? (
@@ -844,11 +1247,50 @@ export function Vision() {
                   </p>
                 </article>
                 <article className="vision-summary-card">
-                  <p className="vision-summary-card__label">Última análise</p>
+                  <p className="vision-summary-card__label">Última captura</p>
                   <p className="vision-summary-card__value vision-summary-card__value--tertiary">{featuredAnalysisRelative}</p>
                   <p className="vision-summary-card__meta">{featuredAnalysisTimestamp}</p>
                 </article>
+                <article className="vision-summary-card">
+                  <p className="vision-summary-card__label">Confiança média</p>
+                  <p className="vision-summary-card__value">{featuredConfidenceLabel || 'N/D'}</p>
+                  <p className="vision-summary-card__meta">
+                    {featuredDetections.length
+                      ? `${featuredDetections.length} detecção(ões) válidas nesta captura`
+                      : 'Sem detecções suficientes para calcular confiança'}
+                  </p>
+                </article>
+                <article className="vision-summary-card">
+                  <p className="vision-summary-card__label">Tempo de processamento</p>
+                  <p className="vision-summary-card__value">{formatDurationSeconds(featuredProcessingTime)}</p>
+                  <p className="vision-summary-card__meta">
+                    {featuredRun?.executed_at
+                      ? `Processado em ${formatDateTime(featuredRun.executed_at)}`
+                      : 'Sem marcação de processamento disponível'}
+                  </p>
+                </article>
+                <article className="vision-summary-card">
+                  <p className="vision-summary-card__label">Fallback usado</p>
+                  <p className="vision-summary-card__value">{getFallbackLabel(featuredFallbackUsed)}</p>
+                  <p className="vision-summary-card__meta">
+                    {featuredFallbackUsed
+                      ? 'Pipeline precisou recorrer a caminho alternativo nesta rodada'
+                      : 'Pipeline executado sem acionar fallback'}
+                  </p>
+                </article>
               </section>
+
+              {featuredLastErrorSummary !== 'Sem erro recente' ? (
+                <section className="vision-error-panel">
+                  <div className="vision-error-panel__icon">
+                    <AlertTriangle className="h-4 w-4" />
+                  </div>
+                  <div className="vision-error-panel__body">
+                    <p className="vision-error-panel__title">Último erro operacional</p>
+                    <p className="vision-error-panel__copy">{featuredLastErrorSummary}</p>
+                  </div>
+                </section>
+              ) : null}
 
               <section className="vision-analysis-card">
                 <div className="vision-analysis-card__header">
@@ -858,7 +1300,7 @@ export function Vision() {
                   <div>
                     <h2 className="vision-analysis-card__title">Conclusões da Análise</h2>
                     <p className="vision-analysis-card__meta">
-                      Model: vision-pipeline • Processado em {formatDateTime(featuredRun?.executed_at)}
+                      Modelo {getRunModelVersionLabel(featuredRun)} • Config {getRunConfigLabel(featuredRun)} • Processado em {formatDateTime(featuredRun?.executed_at)}
                     </p>
                   </div>
                 </div>
@@ -910,6 +1352,21 @@ export function Vision() {
                 <div>
                   <p className="vision-section-label">{featuredRunLabel}</p>
                   <div className="vision-capture-card">
+                    <div className="vision-capture-card__header">
+                      <div>
+                        <h3 className="vision-capture-card__title">{getRunRoomLabel(featuredRun)}</h3>
+                        <p className="vision-capture-card__subtitle">
+                          {getRunCaptureLabel(featuredRun)} • {featuredAnalysisTimestamp}
+                        </p>
+                      </div>
+                      <div className="vision-capture-card__meta">
+                        <span className={cn('vision-pill', getCameraHealthBadgeClassName(featuredCameraStatus))}>
+                          {getCameraHealthStatusLabel(featuredCameraStatus)}
+                        </span>
+                        <span className="vision-pill vision-pill--soft">{getRunModelVersionLabel(featuredRun)}</span>
+                      </div>
+                    </div>
+
                     <div className="vision-capture-toolbar">
                       <div className="vision-capture-pills">
                         <span className="vision-pill vision-pill--soft">
@@ -936,7 +1393,10 @@ export function Vision() {
                       ) : null}
                     </div>
 
-                    <div className="vision-capture-frame">
+                    <div
+                      className="vision-capture-frame"
+                      style={featuredImageSize ? { aspectRatio: `${featuredImageSize.width} / ${featuredImageSize.height}` } : undefined}
+                    >
                       {featuredImageLoading ? <div className="vision-image-loader" /> : null}
                       {featuredRun?.preview_url ? (
                         <>
@@ -1073,6 +1533,10 @@ export function Vision() {
                         <p className="vision-history-item__meta">
                           <Package size={13} />
                           {detectedBlocks > 0 ? `${detectedBlocks} blocos` : '-- blocos'}
+                        </p>
+                        <p className="vision-history-item__meta">
+                          <Camera size={13} />
+                          {run.camera_name || getRunRoomLabel(run)}
                         </p>
                         <p className="vision-history-item__meta">
                           <Cloud size={13} />

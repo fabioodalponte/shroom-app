@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,9 +16,25 @@ from .config.loader import load_vision_config
 from .hardware.light_control import LightControlError, turn_light_off, turn_light_on
 from .inference.pipeline import VisionInferencePipeline
 from .logging_utils import get_vision_logger
+from .models.yolo_block_detector import infer_model_version, resolve_configured_model_paths
 from .storage.artifact_store import ArtifactStore
 from .storage.dataset_classifier import DatasetClassifier
 from .storage.remote_persistence import VisionRemotePersister
+
+
+def _infer_room_name(camera_name: str, configured_room_name: str) -> str:
+    room_name = configured_room_name.strip()
+    if room_name:
+        return room_name
+
+    normalized = camera_name.strip().replace("_", "-").lower()
+    if "colonizacao" in normalized:
+        return "Colonizacao"
+    if "frutificacao" in normalized:
+        return "Frutificacao"
+    if "sala-1" in normalized or "sala1" in normalized:
+        return "Sala 1"
+    return "Nao informada"
 
 
 class VisionOrchestrator:
@@ -32,6 +49,51 @@ class VisionOrchestrator:
         self.dataset_classifier = DatasetClassifier(config, logger=self.logger)
         self.remote_persister = VisionRemotePersister(config, logger=self.logger, artifact_store=self.artifact_store)
         self.active_lot_resolver = ActiveLoteResolver(config, logger=self.logger)
+        self.runtime_context = self._build_runtime_context()
+        self.logger.info(
+            "vision runtime_context_initialized config_name=%s room_name=%s camera_name=%s model_version=%s model_path=%s",
+            self.runtime_context["config_name"],
+            self.runtime_context["room_name"],
+            self.runtime_context["camera_name"],
+            self.runtime_context["model_version"],
+            self.runtime_context["model_path"],
+        )
+
+    def _build_runtime_context(self) -> dict[str, Any]:
+        capture_config = self.config.get("capture", {})
+        runtime_meta = self.config.get("_runtime", {})
+        model_path, _ = resolve_configured_model_paths(self.config)
+        camera_name = str(capture_config.get("camera_name", "") or "").strip() or "camera-nao-configurada"
+        configured_room_name = str(capture_config.get("room_name", "") or "").strip()
+        room_name = _infer_room_name(camera_name, configured_room_name)
+        return {
+            "config_name": str(runtime_meta.get("config_name", "") or "vision_config.json"),
+            "config_path": str(runtime_meta.get("config_path", "") or ""),
+            "room_name": room_name,
+            "camera_name": camera_name,
+            "model_path": str(model_path),
+            "model_version": infer_model_version(model_path),
+        }
+
+    def _build_result_context(
+        self,
+        *,
+        camera_status: str,
+        last_error: str | None = None,
+        used_fallback: bool = False,
+        model_path: str | None = None,
+        model_version: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "config_name": self.runtime_context["config_name"],
+            "room_name": self.runtime_context["room_name"],
+            "camera_name": self.runtime_context["camera_name"],
+            "camera_status": camera_status,
+            "model_path": model_path or self.runtime_context["model_path"],
+            "model_version": model_version or self.runtime_context["model_version"],
+            "used_fallback": used_fallback,
+            "last_error": last_error,
+        }
 
     def status(self) -> dict[str, Any]:
         """Return static runtime status without touching camera or model."""
@@ -40,9 +102,22 @@ class VisionOrchestrator:
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "enabled": self.config.get("enabled", False),
+            "config_name": self.runtime_context["config_name"],
+            "config_path": self.runtime_context["config_path"],
+            "room_name": self.runtime_context["room_name"],
+            "camera_name": self.runtime_context["camera_name"],
+            "camera_status": "unknown",
             "camera_url": self.config.get("capture", {}).get("camera_url"),
             "default_lote_id": self.config.get("capture", {}).get("default_lote_id"),
             "capture_timeout_seconds": self.config.get("capture", {}).get("request_timeout_seconds", 15),
+            "capture_connect_timeout_seconds": self.config.get("capture", {}).get(
+                "connect_timeout_seconds",
+                self.config.get("capture", {}).get("request_timeout_seconds", 15),
+            ),
+            "capture_read_timeout_seconds": self.config.get("capture", {}).get(
+                "read_timeout_seconds",
+                self.config.get("capture", {}).get("request_timeout_seconds", 15),
+            ),
             "capture_retries": self.config.get("capture", {}).get("request_retries", 3),
             "capture_retry_backoff_seconds": self.config.get("capture", {}).get("retry_backoff_seconds", 1.0),
             "lighting_enabled": self.config.get("lighting", {}).get("enabled", True),
@@ -56,6 +131,7 @@ class VisionOrchestrator:
             "lighting_verify_state_strict": self.config.get("lighting", {}).get("verify_state_strict", False),
             "lighting_warmup_seconds": self.config.get("lighting", {}).get("warmup_seconds", 8),
             "lighting_cooldown_seconds": self.config.get("lighting", {}).get("cooldown_seconds", 1),
+            "lighting_capture_session_max_seconds": self.config.get("lighting", {}).get("capture_session_max_seconds"),
             "artifacts_dir": str(self.artifact_store.artifacts_dir),
             "results_dir": str(self.artifact_store.results_dir),
             "dataset_dir": str(self.artifact_store.dataset_dir),
@@ -65,6 +141,8 @@ class VisionOrchestrator:
             "inference_model": primary_model_path,
             "inference_model_path": primary_model_path,
             "inference_fallback_model_path": inference_config.get("fallback_model_path"),
+            "model_path": self.runtime_context["model_path"],
+            "model_version": self.runtime_context["model_version"],
             "inference_model_version": "v2" if "v2" in str(primary_model_path or "") else "v1",
             "inference_device": inference_config.get("device", "cpu"),
             "quality_thresholds": self.inference_pipeline.quality_thresholds,
@@ -73,20 +151,32 @@ class VisionOrchestrator:
             "remote_env_ready": self.remote_persister.env_config.is_ready,
             "remote_env_file": self.remote_persister.env_config.env_file_path,
             "remote_env_file_loaded": self.remote_persister.env_config.env_file_loaded,
+            "used_fallback": False,
         }
 
     def capture_once(self) -> dict[str, Any]:
         """Capture and store one snapshot without crashing the runner on failure."""
+        self.logger.info(
+            "vision capture_start mode=capture_once config_name=%s room_name=%s camera_name=%s",
+            self.runtime_context["config_name"],
+            self.runtime_context["room_name"],
+            self.runtime_context["camera_name"],
+        )
         capture_result = capture_snapshot_safe(self.capture_client, self.logger)
         if not capture_result["ok"]:
             return {
                 "status": "capture_failed",
                 "error": capture_result["error"],
                 "camera_url": capture_result["camera_url"],
+                **self._build_result_context(
+                    camera_status="offline",
+                    last_error=str(capture_result["error"]),
+                ),
             }
 
         image_bytes = capture_result["image_bytes"]
         metadata = capture_result["metadata"]
+        metadata.update(self._build_result_context(camera_status="online"))
         saved_image = self.artifact_store.save_snapshot(image_bytes, metadata)
         self.logger.info("snapshot_saved image_path=%s", saved_image)
 
@@ -94,6 +184,7 @@ class VisionOrchestrator:
             "status": "captured",
             "saved_image": str(saved_image),
             "metadata": metadata,
+            **self._build_result_context(camera_status="online"),
         }
 
     def _resolve_lote_id(self, lote_id: str | None = None) -> str | None:
@@ -133,19 +224,40 @@ class VisionOrchestrator:
 
     def pipeline_once(self, lote_id: str | None = None) -> dict[str, Any]:
         """Run the full placeholder pipeline once without crashing on capture errors."""
-        self.logger.info("vision capture_pipeline_start mode=pipeline_once")
+        self.logger.info(
+            "vision capture_pipeline_start mode=pipeline_once config_name=%s room_name=%s camera_name=%s model_version=%s model_path=%s",
+            self.runtime_context["config_name"],
+            self.runtime_context["room_name"],
+            self.runtime_context["camera_name"],
+            self.runtime_context["model_version"],
+            self.runtime_context["model_path"],
+        )
         capture_result = capture_snapshot_safe(self.capture_client, self.logger)
         if not capture_result["ok"]:
             result = {
                 "status": "pipeline_capture_failed",
                 "error": capture_result["error"],
                 "camera_url": capture_result["camera_url"],
+                **self._build_result_context(
+                    camera_status="offline",
+                    last_error=str(capture_result["error"]),
+                ),
             }
-            self.logger.info("vision capture_pipeline_complete mode=pipeline_once status=%s", result["status"])
+            self.logger.info(
+                "vision capture_pipeline_complete mode=pipeline_once status=%s config_name=%s room_name=%s camera_name=%s camera_status=%s model_version=%s used_fallback=%s",
+                result["status"],
+                result["config_name"],
+                result["room_name"],
+                result["camera_name"],
+                result["camera_status"],
+                result["model_version"],
+                result["used_fallback"],
+            )
             return result
 
         image_bytes = capture_result["image_bytes"]
         capture_metadata = capture_result["metadata"]
+        capture_metadata.update(self._build_result_context(camera_status="online"))
         resolved_lote_id = self._resolve_lote_id(lote_id)
         if resolved_lote_id:
             capture_metadata["lote_id"] = resolved_lote_id
@@ -171,6 +283,23 @@ class VisionOrchestrator:
         inference_result["storage_uploaded"] = remote_persistence["storage_uploaded"]
         inference_result["db_record_created"] = remote_persistence["db_record_created"]
         inference_result["summary"]["remote_persisted"] = remote_persistence["remote_persisted"]
+        last_error = (
+            remote_persistence.get("error")
+            or inference_result.get("last_error")
+            or inference_result["quality_check"].get("error")
+            or inference_result["block_detection"].get("error")
+            or None
+        )
+        result_context = self._build_result_context(
+            camera_status="online",
+            last_error=str(last_error) if last_error else None,
+            used_fallback=bool(inference_result["block_detection"].get("used_fallback", False)),
+            model_path=inference_result["block_detection"].get("model_path"),
+            model_version=inference_result["block_detection"].get("model_version"),
+        )
+        inference_result.update(result_context)
+        inference_result["last_error"] = result_context["last_error"]
+        inference_result["summary"].update(result_context)
 
         saved_result = self.artifact_store.save_inference_result(
             image_path=saved_image,
@@ -182,8 +311,18 @@ class VisionOrchestrator:
             "saved_image": str(saved_image),
             "saved_result": str(saved_result),
             "result": inference_result,
+            **result_context,
         }
-        self.logger.info("vision capture_pipeline_complete mode=pipeline_once status=%s", result["status"])
+        self.logger.info(
+            "vision capture_pipeline_complete mode=pipeline_once status=%s config_name=%s room_name=%s camera_name=%s camera_status=%s model_version=%s used_fallback=%s",
+            result["status"],
+            result["config_name"],
+            result["room_name"],
+            result["camera_name"],
+            result["camera_status"],
+            result["model_version"],
+            result["used_fallback"],
+        )
         return result
 
     def _load_saved_snapshot_metadata(self, image_path: Path) -> dict[str, Any]:
@@ -343,25 +482,87 @@ class VisionOrchestrator:
             "status": "block_detection_complete",
             "image_path": str(latest_snapshot),
             "block_detection": detection_result,
+            **self._build_result_context(
+                camera_status="unknown",
+                last_error=detection_result.get("error"),
+                used_fallback=bool(detection_result.get("used_fallback", False)),
+                model_path=detection_result.get("model_path"),
+                model_version=detection_result.get("model_version"),
+            ),
         }
 
     def scheduled_capture(self, lote_id: str | None = None) -> dict[str, Any]:
         """Run the full pipeline with optional room lighting control."""
         lighting_config = self.config.get("lighting", {})
+        capture_config = self.config.get("capture", {})
         lighting_enabled = bool(lighting_config.get("enabled", True))
         warmup_seconds = max(0.0, float(lighting_config.get("warmup_seconds", 8)))
         cooldown_seconds = max(0.0, float(lighting_config.get("cooldown_seconds", 1)))
+        capture_session_max_seconds = max(
+            1.0,
+            float(
+                lighting_config.get(
+                    "capture_session_max_seconds",
+                    warmup_seconds
+                    + float(capture_config.get("connect_timeout_seconds", capture_config.get("request_timeout_seconds", 15)))
+                    + float(capture_config.get("read_timeout_seconds", capture_config.get("request_timeout_seconds", 15)))
+                    + (
+                        max(0, int(capture_config.get("request_retries", 3)) - 1)
+                        * max(0.0, float(capture_config.get("retry_backoff_seconds", 1.0)))
+                    )
+                    + cooldown_seconds
+                    + 10.0,
+                )
+            ),
+        )
         active_lot_resolution = self._resolve_scheduled_lote_context(lote_id)
+        operation_started_at = time.monotonic()
 
         light_on_attempted = False
         light_on_ok: bool | None = None
         light_off_attempted = False
         light_off_ok: bool | None = None
         light_off_error: str | None = None
+        light_fail_safe_armed = False
+        light_fail_safe_triggered = False
+        light_fail_safe_error: str | None = None
         result: dict[str, Any] | None = None
+        light_off_completed = threading.Event()
+        light_fail_safe_lock = threading.Lock()
+        light_fail_safe_timer: threading.Timer | None = None
+
+        def _force_light_off_fail_safe() -> None:
+            nonlocal light_fail_safe_triggered, light_fail_safe_error, light_off_ok, light_off_error
+            with light_fail_safe_lock:
+                if light_off_completed.is_set():
+                    return
+
+                light_fail_safe_triggered = True
+                self.logger.critical(
+                    "vision light_fail_safe_triggered capture_session_max_seconds=%.2f",
+                    capture_session_max_seconds,
+                )
+                try:
+                    turn_light_off(self.config, self.logger)
+                    light_off_ok = True
+                    light_off_error = None
+                    light_off_completed.set()
+                    self.logger.critical("vision light_fail_safe_success")
+                except LightControlError as exc:
+                    light_off_ok = False
+                    light_off_error = str(exc)
+                    light_fail_safe_error = str(exc)
+                    self.logger.critical("vision light_fail_safe_failed error=%s", exc)
 
         try:
-            self.logger.info("vision capture_pipeline_start mode=scheduled_capture")
+            self.logger.info(
+                "vision capture_pipeline_start mode=scheduled_capture config_name=%s room_name=%s camera_name=%s model_version=%s model_path=%s",
+                self.runtime_context["config_name"],
+                self.runtime_context["room_name"],
+                self.runtime_context["camera_name"],
+                self.runtime_context["model_version"],
+                self.runtime_context["model_path"],
+            )
             if active_lot_resolution.lote_id:
                 self.logger.info(
                     "vision active_lot_found lote_id=%s codigo=%s strategy=%s reason=%s sala=%s camera=%s",
@@ -385,6 +586,14 @@ class VisionOrchestrator:
                 try:
                     turn_light_on(self.config, self.logger)
                     light_on_ok = True
+                    light_fail_safe_timer = threading.Timer(capture_session_max_seconds, _force_light_off_fail_safe)
+                    light_fail_safe_timer.daemon = True
+                    light_fail_safe_timer.start()
+                    light_fail_safe_armed = True
+                    self.logger.info(
+                        "vision light_fail_safe_armed capture_session_max_seconds=%.2f",
+                        capture_session_max_seconds,
+                    )
                 except LightControlError as exc:
                     light_on_ok = False
                     self.logger.error("vision scheduled_capture_aborted stage=light_on error=%s", exc)
@@ -398,11 +607,15 @@ class VisionOrchestrator:
                             "enabled": lighting_enabled,
                             "warmup_seconds": warmup_seconds,
                             "cooldown_seconds": cooldown_seconds,
+                            "capture_session_max_seconds": capture_session_max_seconds,
                             "light_on_attempted": light_on_attempted,
                             "light_on_ok": light_on_ok,
                             "light_off_attempted": False,
                             "light_off_ok": None,
                             "light_off_error": None,
+                            "light_fail_safe_armed": light_fail_safe_armed,
+                            "light_fail_safe_triggered": light_fail_safe_triggered,
+                            "light_fail_safe_error": light_fail_safe_error,
                         },
                     }
                     return result
@@ -419,25 +632,44 @@ class VisionOrchestrator:
                 "enabled": lighting_enabled,
                 "warmup_seconds": warmup_seconds,
                 "cooldown_seconds": cooldown_seconds,
+                "capture_session_max_seconds": capture_session_max_seconds,
                 "light_on_attempted": light_on_attempted,
                 "light_on_ok": light_on_ok,
                 "light_off_attempted": light_off_attempted,
                 "light_off_ok": light_off_ok,
                 "light_off_error": light_off_error,
+                "light_fail_safe_armed": light_fail_safe_armed,
+                "light_fail_safe_triggered": light_fail_safe_triggered,
+                "light_fail_safe_error": light_fail_safe_error,
             }
             return result
         finally:
-            if lighting_enabled and light_on_attempted:
+            if lighting_enabled and light_on_attempted and not light_off_completed.is_set():
                 light_off_attempted = True
                 try:
+                    self.logger.info("vision light_off_start reason=scheduled_capture_finally")
                     turn_light_off(self.config, self.logger)
                     light_off_ok = True
+                    light_off_error = None
+                    light_off_completed.set()
                 except LightControlError as exc:
                     light_off_ok = False
                     light_off_error = str(exc)
                     self.logger.critical("vision light_off_failed_critical error=%s", exc)
                 if cooldown_seconds > 0:
                     time.sleep(cooldown_seconds)
+
+            if light_fail_safe_timer is not None:
+                light_fail_safe_timer.cancel()
+
+            duration_seconds = round(time.monotonic() - operation_started_at, 3)
+            self.logger.info(
+                "vision capture_session_complete duration_seconds=%.3f light_fail_safe_armed=%s light_fail_safe_triggered=%s light_off_ok=%s",
+                duration_seconds,
+                light_fail_safe_armed,
+                light_fail_safe_triggered,
+                light_off_ok,
+            )
 
             if result is not None:
                 lighting_result = result.setdefault("lighting", {})
@@ -446,14 +678,28 @@ class VisionOrchestrator:
                         "enabled": lighting_enabled,
                         "warmup_seconds": warmup_seconds,
                         "cooldown_seconds": cooldown_seconds,
+                        "capture_session_max_seconds": capture_session_max_seconds,
                         "light_on_attempted": light_on_attempted,
                         "light_on_ok": light_on_ok,
                         "light_off_attempted": light_off_attempted,
                         "light_off_ok": light_off_ok,
                         "light_off_error": light_off_error,
+                        "light_fail_safe_armed": light_fail_safe_armed,
+                        "light_fail_safe_triggered": light_fail_safe_triggered,
+                        "light_fail_safe_error": light_fail_safe_error,
                     }
                 )
-                self.logger.info("vision capture_pipeline_complete mode=scheduled_capture status=%s", result.get("status"))
+                result["duration_seconds"] = duration_seconds
+                self.logger.info(
+                    "vision capture_pipeline_complete mode=scheduled_capture status=%s config_name=%s room_name=%s camera_name=%s camera_status=%s model_version=%s used_fallback=%s",
+                    result.get("status"),
+                    result.get("config_name", self.runtime_context["config_name"]),
+                    result.get("room_name", self.runtime_context["room_name"]),
+                    result.get("camera_name", self.runtime_context["camera_name"]),
+                    result.get("camera_status", "unknown"),
+                    result.get("model_version", self.runtime_context["model_version"]),
+                    result.get("used_fallback", False),
+                )
 
 
 def print_json(payload: dict[str, Any]) -> None:

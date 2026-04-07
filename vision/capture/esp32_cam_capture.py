@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import http.client
 import logging
 import socket
 import ssl
 import time
 from datetime import datetime, timezone
 from typing import Any
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 
 
 class VisionCaptureError(Exception):
@@ -23,6 +23,12 @@ class ESP32CamCaptureClient:
         self.capture_config = config.get("capture", {})
         self.camera_url = str(self.capture_config.get("camera_url", "")).strip()
         self.timeout_seconds = int(self.capture_config.get("request_timeout_seconds", 15))
+        self.connect_timeout_seconds = float(
+            self.capture_config.get("connect_timeout_seconds", self.timeout_seconds)
+        )
+        self.read_timeout_seconds = float(
+            self.capture_config.get("read_timeout_seconds", self.timeout_seconds)
+        )
         self.retries = max(1, int(self.capture_config.get("request_retries", 3)))
         self.retry_backoff_seconds = float(self.capture_config.get("retry_backoff_seconds", 1.0))
         self.verify_tls = bool(self.capture_config.get("verify_tls", True))
@@ -34,30 +40,37 @@ class ESP32CamCaptureClient:
         attempt_errors: list[str] = []
 
         for attempt in range(1, self.retries + 1):
+            attempt_started_at = time.monotonic()
             if logger:
                 logger.info(
-                    "capture_attempt_start camera_url=%s attempt=%s/%s timeout_seconds=%s",
+                    "capture_attempt_start camera_url=%s attempt=%s/%s connect_timeout_seconds=%.2f read_timeout_seconds=%.2f",
                     self.camera_url,
                     attempt,
                     self.retries,
-                    self.timeout_seconds,
+                    self.connect_timeout_seconds,
+                    self.read_timeout_seconds,
                 )
 
             try:
                 image_bytes, metadata = self.capture_snapshot_once()
+                attempt_duration_seconds = round(time.monotonic() - attempt_started_at, 3)
                 metadata["capture_attempt"] = attempt
                 metadata["capture_attempts_total"] = self.retries
                 metadata["request_timeout_seconds"] = self.timeout_seconds
+                metadata["connect_timeout_seconds"] = self.connect_timeout_seconds
+                metadata["read_timeout_seconds"] = self.read_timeout_seconds
+                metadata["capture_attempt_duration_seconds"] = attempt_duration_seconds
                 return image_bytes, metadata
             except VisionCaptureError as exc:
                 attempt_errors.append(f"attempt {attempt}/{self.retries}: {exc}")
 
                 if logger:
                     logger.warning(
-                        "capture_attempt_failed camera_url=%s attempt=%s/%s error=%s",
+                        "capture_attempt_failed camera_url=%s attempt=%s/%s duration_seconds=%.3f error=%s",
                         self.camera_url,
                         attempt,
                         self.retries,
+                        time.monotonic() - attempt_started_at,
                         exc,
                     )
 
@@ -82,39 +95,78 @@ class ESP32CamCaptureClient:
         )
 
     def capture_snapshot_once(self) -> tuple[bytes, dict[str, Any]]:
-        request = Request(
-            self.camera_url,
-            method="GET",
-            headers={"User-Agent": "shroom-vision/0.1"},
-        )
-        context = None
-        if self.camera_url.startswith("https://") and not self.verify_tls:
-            context = ssl._create_unverified_context()
+        parsed = urlsplit(self.camera_url)
+        if parsed.scheme not in {"http", "https"}:
+            raise VisionCaptureError(f"Unsupported camera URL scheme for {self.camera_url}")
+
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+
+        connection: http.client.HTTPConnection | http.client.HTTPSConnection | None = None
+        response: http.client.HTTPResponse | None = None
 
         try:
-            with urlopen(request, timeout=self.timeout_seconds, context=context) as response:
-                image_bytes = response.read()
-                content_type = response.headers.get("Content-Type", "application/octet-stream")
-                http_status = getattr(response, "status", 200)
-        except HTTPError as exc:
+            if parsed.scheme == "https":
+                context = ssl.create_default_context()
+                if not self.verify_tls:
+                    context.check_hostname = False
+                    context.verify_mode = ssl.CERT_NONE
+                connection = http.client.HTTPSConnection(
+                    parsed.hostname,
+                    parsed.port or 443,
+                    timeout=self.connect_timeout_seconds,
+                    context=context,
+                )
+            else:
+                connection = http.client.HTTPConnection(
+                    parsed.hostname,
+                    parsed.port or 80,
+                    timeout=self.connect_timeout_seconds,
+                )
+
+            connection.request("GET", path, headers={"User-Agent": "shroom-vision/0.1"})
+            response = connection.getresponse()
+            http_status = response.status
+            content_type = response.getheader("Content-Type", "application/octet-stream")
+
+            if connection.sock is not None:
+                connection.sock.settimeout(self.read_timeout_seconds)
+
+            image_bytes = response.read()
+        except http.client.HTTPException as exc:
             raise VisionCaptureError(
-                f"Camera returned HTTP {exc.code} for {self.camera_url}"
-            ) from exc
-        except URLError as exc:
-            raise VisionCaptureError(
-                f"Camera request failed for {self.camera_url}: {exc.reason}"
+                f"Camera returned an invalid HTTP response for {self.camera_url}: {exc}"
             ) from exc
         except (TimeoutError, socket.timeout) as exc:
             raise VisionCaptureError(
-                f"Camera request timed out after {self.timeout_seconds}s for {self.camera_url}"
+                "Camera request timed out "
+                f"(connect={self.connect_timeout_seconds}s, read={self.read_timeout_seconds}s) "
+                f"for {self.camera_url}"
             ) from exc
         except OSError as exc:
-            raise VisionCaptureError(
-                f"Camera request failed for {self.camera_url}: {exc}"
-            ) from exc
+            raise VisionCaptureError(f"Camera request failed for {self.camera_url}: {exc}") from exc
+        finally:
+            if response is not None:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+            if connection is not None:
+                connection.close()
+
+        if http_status < 200 or http_status >= 300:
+            raise VisionCaptureError(f"Camera returned HTTP {http_status} for {self.camera_url}")
 
         if not image_bytes:
             raise VisionCaptureError(f"Camera returned an empty payload for {self.camera_url}")
+
+        if not _is_probably_image_payload(content_type, image_bytes):
+            preview = image_bytes[:120].decode("utf-8", errors="replace").strip().replace("\n", " ")
+            raise VisionCaptureError(
+                "Camera returned a non-image payload "
+                f"for {self.camera_url} (content_type={content_type}, preview={preview!r})"
+            )
 
         metadata = {
             "captured_at": datetime.now(timezone.utc).isoformat(),
@@ -125,6 +177,20 @@ class ESP32CamCaptureClient:
             "source": "esp32-cam",
         }
         return image_bytes, metadata
+
+
+def _is_probably_image_payload(content_type: str, payload: bytes) -> bool:
+    normalized = content_type.lower().strip()
+    if normalized.startswith("image/"):
+        return True
+
+    return (
+        payload.startswith(b"\xff\xd8\xff")  # JPEG
+        or payload.startswith(b"\x89PNG\r\n\x1a\n")  # PNG
+        or payload.startswith(b"GIF87a")
+        or payload.startswith(b"GIF89a")
+        or payload.startswith(b"RIFF")  # WEBP container
+    )
 
 
 def capture_snapshot_safe(
