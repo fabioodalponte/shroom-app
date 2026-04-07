@@ -1939,7 +1939,7 @@ export async function getCameras() {
     .from('cameras')
     .select(`
       *,
-      sala_ref:salas(id, codigo, nome, tipo, ativa, primary_camera_id)
+      sala_ref:salas!cameras_sala_id_fkey(id, codigo, nome, tipo, ativa, primary_camera_id)
     `)
     .order('localizacao');
 
