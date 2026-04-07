@@ -310,6 +310,7 @@ export async function createSala(input: {
   tipo?: string | null;
   ativa?: boolean | null;
   descricao?: string | null;
+  primary_camera_id?: string | null;
 }) {
   const nome = normalizeSalaLabel(input.nome);
   if (!nome) {
@@ -335,6 +336,7 @@ export async function createSala(input: {
       tipo: normalizeSalaLabel(input.tipo) || 'cultivo',
       ativa: input.ativa ?? true,
       descricao: normalizeSalaLabel(input.descricao) || null,
+      primary_camera_id: String(input.primary_camera_id || '').trim() || null,
     })
     .select()
     .single();
@@ -349,6 +351,7 @@ export async function updateSala(id: string, updates: {
   tipo?: string | null;
   ativa?: boolean | null;
   descricao?: string | null;
+  primary_camera_id?: string | null;
 }) {
   const payload: Record<string, unknown> = {};
 
@@ -357,6 +360,7 @@ export async function updateSala(id: string, updates: {
   if ('tipo' in updates) payload.tipo = normalizeSalaLabel(updates.tipo) || 'cultivo';
   if ('descricao' in updates) payload.descricao = normalizeSalaLabel(updates.descricao) || null;
   if ('ativa' in updates && typeof updates.ativa === 'boolean') payload.ativa = updates.ativa;
+  if ('primary_camera_id' in updates) payload.primary_camera_id = String(updates.primary_camera_id || '').trim() || null;
 
   const { data, error } = await supabase
     .from('salas')
@@ -386,7 +390,7 @@ export async function getLotes(filters?: { status?: string; sala?: string; fase_
           recomendacoes_json
         )
       ),
-      sala_ref:salas(id, codigo, nome, tipo, ativa),
+      sala_ref:salas(id, codigo, nome, tipo, ativa, primary_camera_id),
       responsavel:usuarios(id, nome, email),
       blocos:lotes_blocos(id, status_bloco, fase_operacional)
     `)
@@ -438,7 +442,7 @@ export async function createLote(loteData: any) {
     })
     .select(`
       *,
-      sala_ref:salas(id, codigo, nome, tipo, ativa),
+      sala_ref:salas(id, codigo, nome, tipo, ativa, primary_camera_id),
       produto:produtos(*),
       responsavel:usuarios(id, nome, email)
     `)
@@ -488,7 +492,7 @@ export async function updateLote(id: string, updates: any) {
     .eq('id', id)
     .select(`
       *,
-      sala_ref:salas(id, codigo, nome, tipo, ativa)
+      sala_ref:salas(id, codigo, nome, tipo, ativa, primary_camera_id)
     `)
     .single();
 
@@ -522,7 +526,7 @@ export async function getLoteById(loteId: string) {
     .from('lotes')
     .select(`
       *,
-      sala_ref:salas(id, codigo, nome, tipo, ativa),
+      sala_ref:salas(id, codigo, nome, tipo, ativa, primary_camera_id),
       produto:produtos(
         *,
         perfil_cultivo:produtos_perfis_cultivo(*)
@@ -1935,7 +1939,7 @@ export async function getCameras() {
     .from('cameras')
     .select(`
       *,
-      sala_ref:salas(id, codigo, nome, tipo, ativa)
+      sala_ref:salas(id, codigo, nome, tipo, ativa, primary_camera_id)
     `)
     .order('localizacao');
 
@@ -1963,7 +1967,7 @@ export async function getControladoresSala() {
       observacoes,
       created_at,
       updated_at,
-      sala_ref:salas(id, codigo, nome, tipo, ativa)
+      sala_ref:salas(id, codigo, nome, tipo, ativa, primary_camera_id)
     `)
     .order('localizacao');
 

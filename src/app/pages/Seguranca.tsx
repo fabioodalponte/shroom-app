@@ -52,6 +52,7 @@ interface LoteMonitoramento {
     id?: string | null;
     codigo?: string | null;
     nome?: string | null;
+    primary_camera_id?: string | null;
   } | null;
   fase_operacional?: string | null;
   data_inoculacao?: string | null;
@@ -807,6 +808,13 @@ export function Seguranca() {
     const salaLabel = resolveLoteSalaLabel(lote);
     const sala = normalizeText(salaLabel);
     const codigo = normalizeText(lote.codigo_lote || '');
+    const explicitCameraId = String(lote.sala_ref?.primary_camera_id || '').trim();
+
+    if (explicitCameraId) {
+      const explicitCamera = cameras.find((camera) => camera.id === explicitCameraId) || null;
+      if (explicitCamera && hasCameraStream(explicitCamera)) return explicitCamera;
+      if (explicitCamera) return explicitCamera;
+    }
 
     const encontrada = universoBusca.find((camera) => {
       const nome = normalizeText(camera.nome || '');

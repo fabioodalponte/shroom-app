@@ -7,6 +7,7 @@ export interface SalaRecord {
   tipo?: string | null;
   ativa?: boolean | null;
   descricao?: string | null;
+  primary_camera_id?: string | null;
 }
 
 export interface SalaRefRecord {
@@ -15,6 +16,7 @@ export interface SalaRefRecord {
   nome?: string | null;
   tipo?: string | null;
   ativa?: boolean | null;
+  primary_camera_id?: string | null;
 }
 
 export interface RoomLote {

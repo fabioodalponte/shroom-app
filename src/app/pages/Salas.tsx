@@ -41,7 +41,16 @@ const DEFAULT_FORM = {
   tipo: 'cultivo',
   ativa: true,
   descricao: '',
+  primaryCameraId: '',
 };
+
+interface RoomCameraOption {
+  id: string;
+  nome: string;
+  localizacao?: string | null;
+  status?: string | null;
+  url_stream?: string | null;
+}
 
 function normalizeText(value?: string | null) {
   return String(value || '')
@@ -212,6 +221,7 @@ export function Salas() {
   const [lotes, setLotes] = useState<RoomLote[]>([]);
   const [sensores, setSensores] = useState<RoomSensorMonitor[]>([]);
   const [atuadores, setAtuadores] = useState<RoomController[]>([]);
+  const [cameras, setCameras] = useState<RoomCameraOption[]>([]);
   const [loadingOperational, setLoadingOperational] = useState(false);
   const [operationalError, setOperationalError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -222,6 +232,7 @@ export function Salas() {
   const formRef = useRef<HTMLDivElement | null>(null);
 
   const salas = useMemo(() => (data?.salas || []) as SalaRecord[], [data?.salas]);
+  const cameraById = useMemo(() => new Map(cameras.map((camera) => [camera.id, camera])), [cameras]);
   const rooms = useMemo(
     () => aggregateRooms({ salas, lotes, sensores, atuadores }),
     [atuadores, lotes, salas, sensores],
@@ -303,6 +314,7 @@ export function Salas() {
       tipo: sala.tipo || 'cultivo',
       ativa: sala.ativa !== false,
       descricao: sala.descricao || '',
+      primaryCameraId: sala.primary_camera_id || '',
     });
     scrollToForm();
   };
@@ -314,10 +326,11 @@ export function Salas() {
     try {
       await fetchSalas();
 
-      const [lotesResult, sensoresResult, atuadoresResult] = await Promise.allSettled([
+      const [lotesResult, sensoresResult, atuadoresResult, camerasResult] = await Promise.allSettled([
         fetchServer('/lotes'),
         fetchServer('/sensores/latest?hours=168'),
         fetchServer('/controladores'),
+        fetchServer('/cameras'),
       ]);
 
       const issues: string[] = [];
@@ -346,6 +359,14 @@ export function Salas() {
         issues.push('atuadores');
       }
 
+      if (camerasResult.status === 'fulfilled') {
+        setCameras((camerasResult.value.cameras || []) as RoomCameraOption[]);
+      } else {
+        console.warn('Falha ao carregar câmeras para salas:', camerasResult.reason);
+        setCameras([]);
+        issues.push('cameras');
+      }
+
       if (issues.length > 0) {
         setOperationalError(`Alguns blocos operacionais não foram carregados (${issues.join(', ')}).`);
       }
@@ -355,6 +376,7 @@ export function Salas() {
       setLotes([]);
       setSensores([]);
       setAtuadores([]);
+      setCameras([]);
     } finally {
       setLoadingOperational(false);
     }
@@ -386,6 +408,7 @@ export function Salas() {
       tipo: formData.tipo,
       ativa: formData.ativa,
       descricao: formData.descricao,
+      primary_camera_id: formData.primaryCameraId || null,
     };
 
     try {
@@ -732,6 +755,26 @@ export function Salas() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="primary-camera">Câmera principal</Label>
+              <Select
+                value={formData.primaryCameraId || 'sem-camera'}
+                onValueChange={(value) => setFormData((current) => ({ ...current, primaryCameraId: value === 'sem-camera' ? '' : value }))}
+              >
+                <SelectTrigger id="primary-camera">
+                  <SelectValue placeholder="Selecionar câmera cadastrada" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sem-camera">Sem câmera vinculada</SelectItem>
+                  {cameras.map((camera) => (
+                    <SelectItem key={camera.id} value={camera.id}>
+                      {camera.nome} {camera.localizacao ? `• ${camera.localizacao}` : ''} {camera.status ? `• ${camera.status}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="descricao">Descrição</Label>
               <Textarea
                 id="descricao"
@@ -778,6 +821,7 @@ export function Salas() {
             ) : (
               salas.map((sala) => {
                 const room = roomIndex.get(sala.id);
+                const linkedCamera = sala.primary_camera_id ? cameraById.get(sala.primary_camera_id) : null;
                 return (
                   <div key={sala.id} className="rooms-manage-row">
                     <div className="rooms-manage-row__main">
@@ -785,6 +829,9 @@ export function Salas() {
                         <strong>{sala.nome}</strong>
                         <p>
                           {sala.codigo} • {getRoomTypeLabel(sala.tipo)} • {sala.ativa !== false ? 'Ativa' : 'Inativa'}
+                        </p>
+                        <p>
+                          {linkedCamera ? `Câmera principal: ${linkedCamera.nome}` : 'Câmera principal não vinculada'}
                         </p>
                       </div>
                       <span className={`room-status-chip room-status-chip--${room?.status || 'ok'}`}>

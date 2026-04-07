@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS salas (
   tipo VARCHAR(60) NOT NULL DEFAULT 'cultivo',
   ativa BOOLEAN DEFAULT true,
   descricao TEXT,
+  primary_camera_id UUID,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -202,6 +203,21 @@ CREATE TABLE IF NOT EXISTS cameras (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_salas_primary_camera_id ON salas(primary_camera_id);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'salas_primary_camera_id_fkey'
+  ) THEN
+    ALTER TABLE salas
+      ADD CONSTRAINT salas_primary_camera_id_fkey
+      FOREIGN KEY (primary_camera_id) REFERENCES cameras(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 -- ============================================
 -- 12. TABELA DE CONTROLADORES DE SALA
