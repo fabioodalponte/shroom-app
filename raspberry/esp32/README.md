@@ -6,6 +6,7 @@ Arquivo versionado:
 2. `esp32_cam_capture.ino`
 3. `esp32_relay_controller.ino`
 4. `vision_cam_s3/vision_cam_s3.ino`
+5. `esp32_relay_controller_frutificacao.ino`
 
 ## Objetivo
 
@@ -235,6 +236,30 @@ insert into public.controladores_sala (
 2. A Function injeta `X-API-Token` e faz proxy para o rele.
 3. O browser nunca fala direto com `10.0.0.148`.
 4. Isso evita expor segredo, evita CORS/mixed content e funciona igual em localhost e producao.
+
+## ESP32 Relay Controller (Frutificacao)
+
+Arquivo: `esp32_relay_controller_frutificacao.ino`
+
+Esse sketch foi separado para o segundo rele da sala de frutificacao.
+
+Padrao definido:
+
+1. `DEVICE_ID = relay-frutificacao-01`
+2. `DEVICE_NAME = ESP32 Relay Hub - Frutificacao`
+3. `relay2 = luz_frutificacao`
+
+Fluxo recomendado:
+
+1. editar `WIFI_SSID`, `WIFI_PASSWORD` e `API_TOKEN`
+2. gravar no ESP32
+3. descobrir o IP pelo serial monitor
+4. validar `GET /status`
+5. validar `POST /relay` com `relay = 2`
+
+Guia rapido:
+
+1. `FRUTIFICACAO-RELAY-SETUP.md`
 
 ## Firmware de sensores (SHT45 + SCD41)
 
