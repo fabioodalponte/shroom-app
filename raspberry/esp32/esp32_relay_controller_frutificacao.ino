@@ -2,6 +2,9 @@
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
+#include <Wire.h>
+#include <Adafruit_SHT4x.h>
+#include <SensirionI2cScd4x.h>
 
 // ===============================
 // CONFIG WIFI
@@ -17,12 +20,19 @@ const char* DEVICE_ID = "relay-frutificacao-01";
 const char* DEVICE_NAME = "ESP32 Relay Hub - Frutificacao";
 
 // ===============================
-// PINOS DOS RELES
+// PINOS
+// Mapeamento ajustado para placa ESP32-S3 CAM:
+// - evita GPIOs usados pela interface da camera
+// - evita USB nativo (GPIO19/GPIO20)
+// - evita PSRAM dedicada e pino de boot
 // ===============================
-const int RELAY1_PIN = 12;
-const int RELAY2_PIN = 13;
-const int RELAY3_PIN = 14;
-const int RELAY4_PIN = 15;
+const int SDA_PIN = 41;
+const int SCL_PIN = 42;
+
+const int RELAY1_PIN = 1;
+const int RELAY2_PIN = 14;
+const int RELAY3_PIN = 21;
+const int RELAY4_PIN = 47;
 
 // true = rele ativo em LOW
 const bool RELAY_ACTIVE_LOW = true;
@@ -47,6 +57,16 @@ bool relay4State = false;
 
 String operationMode = "remote";
 unsigned long lastCommandMillis = 0;
+
+Adafruit_SHT4x sht4;
+SensirionI2cScd4x scd4x;
+bool sht45Ready = false;
+bool scd41Ready = false;
+float lastTemperatureC = NAN;
+float lastHumidityPct = NAN;
+float lastCo2Ppm = NAN;
+unsigned long lastSensorReadMs = 0;
+const unsigned long SENSOR_READ_INTERVAL_MS = 5000;
 
 WebServer server(80);
 const char* HEADER_KEYS[] = {"X-API-Token"};
@@ -140,8 +160,87 @@ void sendUnauthorized() {
   sendJson(401, "{\"error\":\"unauthorized\"}");
 }
 
+bool readSHT45(float& tempC, float& humPct) {
+  sensors_event_t humidity;
+  sensors_event_t temp;
+  if (!sht4.getEvent(&humidity, &temp)) {
+    return false;
+  }
+
+  tempC = temp.temperature;
+  humPct = humidity.relative_humidity;
+  return true;
+}
+
+bool readSCD41(float& co2ppm) {
+  bool isDataReady = false;
+  scd4x.getDataReadyStatus(isDataReady);
+  if (!isDataReady) {
+    return false;
+  }
+
+  uint16_t co2 = 0;
+  float tempC = 0.0f;
+  float humPct = 0.0f;
+  uint16_t error = scd4x.readMeasurement(co2, tempC, humPct);
+  if (error || co2 == 0) {
+    return false;
+  }
+
+  co2ppm = static_cast<float>(co2);
+  return true;
+}
+
+void updateSensorReadings(bool forceRead = false) {
+  if (!forceRead && millis() - lastSensorReadMs < SENSOR_READ_INTERVAL_MS) {
+    return;
+  }
+
+  lastSensorReadMs = millis();
+
+  if (sht45Ready) {
+    float tempC = NAN;
+    float humPct = NAN;
+    if (readSHT45(tempC, humPct)) {
+      lastTemperatureC = tempC;
+      lastHumidityPct = humPct;
+    } else {
+      Serial.println("[SENSOR] Falha leitura SHT45");
+    }
+  }
+
+  if (scd41Ready) {
+    float co2ppm = NAN;
+    if (readSCD41(co2ppm)) {
+      lastCo2Ppm = co2ppm;
+    } else {
+      Serial.println("[SENSOR] SCD41 sem dado pronto");
+    }
+  }
+}
+
+void setupSensors() {
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  if (!sht4.begin()) {
+    Serial.println("[SENSOR] Erro ao iniciar SHT45");
+  } else {
+    sht4.setPrecision(SHT4X_HIGH_PRECISION);
+    sht45Ready = true;
+    Serial.println("[SENSOR] SHT45 OK");
+  }
+
+  scd4x.begin(Wire, 0x62);
+  scd4x.stopPeriodicMeasurement();
+  scd4x.startPeriodicMeasurement();
+  scd41Ready = true;
+  Serial.println("[SENSOR] SCD41 OK");
+
+  updateSensorReadings(true);
+}
+
 String buildStatusJson() {
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<768> doc;
 
   doc["deviceId"] = DEVICE_ID;
   doc["deviceName"] = DEVICE_NAME;
@@ -168,6 +267,29 @@ String buildStatusJson() {
   r4["name"] = RELAY4_NAME;
   r4["state"] = relay4State;
 
+  JsonObject sensors = doc.createNestedObject("sensors");
+
+  JsonObject sht45 = sensors.createNestedObject("sht45");
+  sht45["ready"] = sht45Ready;
+  if (isnan(lastTemperatureC)) {
+    sht45["temperatureC"] = nullptr;
+  } else {
+    sht45["temperatureC"] = lastTemperatureC;
+  }
+  if (isnan(lastHumidityPct)) {
+    sht45["humidityPct"] = nullptr;
+  } else {
+    sht45["humidityPct"] = lastHumidityPct;
+  }
+
+  JsonObject scd41 = sensors.createNestedObject("scd41");
+  scd41["ready"] = scd41Ready;
+  if (isnan(lastCo2Ppm)) {
+    scd41["co2ppm"] = nullptr;
+  } else {
+    scd41["co2ppm"] = lastCo2Ppm;
+  }
+
   String output;
   serializeJson(doc, output);
   return output;
@@ -192,6 +314,11 @@ String buildHtmlPage() {
   html += "<h1>Shroom Bros - Relay Controller Frutificacao</h1>";
   html += "<p>IP: <strong>" + WiFi.localIP().toString() + "</strong> | Modo: <strong>" + operationMode + "</strong></p>";
   html += "<p>Canal principal da iluminacao da frutificacao: <strong>relay2</strong></p>";
+  html += "<p>Sensores: ";
+  html += "Temp <strong>" + String(isnan(lastTemperatureC) ? "--" : String(lastTemperatureC, 1)) + " C</strong> | ";
+  html += "Umid <strong>" + String(isnan(lastHumidityPct) ? "--" : String(lastHumidityPct, 1)) + " %</strong> | ";
+  html += "CO2 <strong>" + String(isnan(lastCo2Ppm) ? "--" : String(lastCo2Ppm, 0)) + " ppm</strong>";
+  html += "</p>";
 
   for (int i = 1; i <= 4; i++) {
     bool state = getRelayStateByNumber(i);
@@ -471,6 +598,8 @@ void setup() {
   Serial.println();
   Serial.println("Shroom Bros Relay Controller Frutificacao iniciando...");
 
+  setupSensors();
+
   connectWifi();
 
   if (MDNS.begin("shroombros-relay-frutificacao")) {
@@ -484,5 +613,6 @@ void setup() {
 }
 
 void loop() {
+  updateSensorReadings();
   server.handleClient();
 }
