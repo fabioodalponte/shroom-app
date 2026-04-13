@@ -1,0 +1,411 @@
+{
+  "executed_at": "2026-04-11T18:30:39.392259+00:00",
+  "mode": "yolov8",
+  "image_path": "vision/storage/artifacts/2026/04/11/snapshot_20260411T183011936144Z.jpg",
+  "lote_id": null,
+  "capture_metadata": {
+    "captured_at": "2026-04-11T18:30:11.932823+00:00",
+    "camera_url": "https://cam.cogumelos.net/capture",
+    "http_status": 200,
+    "content_type": "image/jpeg",
+    "size_bytes": 46644,
+    "source": "esp32-cam",
+    "capture_attempt": 1,
+    "capture_attempts_total": 3,
+    "request_timeout_seconds": 15
+  },
+  "quality_check": {
+    "status": "valid",
+    "dataset_eligible": true,
+    "metrics": {
+      "resolution": {
+        "width": 800,
+        "height": 600,
+        "total_pixels": 480000
+      },
+      "brightness_mean": 70.23,
+      "contrast_stddev": 61.16,
+      "sharpness_score": 13.46
+    },
+    "flags": {
+      "low_resolution": false,
+      "too_dark": false,
+      "too_bright": false,
+      "too_blurry": false,
+      "invalid_image": false
+    },
+    "thresholds": {
+      "min_width": 640,
+      "min_height": 480,
+      "too_dark_below": 55.0,
+      "too_bright_above": 210.0,
+      "too_blurry_below": 12.0
+    },
+    "error": null
+  },
+  "block_detection": {
+    "enabled": true,
+    "model": "/home/shroom/workspace/shroom-app/vision/models/block_detector_v2.pt",
+    "model_path": "/home/shroom/workspace/shroom-app/vision/models/block_detector_v2.pt",
+    "model_version": "v2",
+    "used_fallback": false,
+    "requested_model_path": "/home/shroom/workspace/shroom-app/vision/models/block_detector_v2.pt",
+    "fallback_model_path": "/home/shroom/workspace/shroom-app/vision/models/block_detector.pt",
+    "device": "cpu",
+    "blocos_detectados": 15,
+    "detections": [
+      {
+        "label": "bloco",
+        "confidence": 0.7951,
+        "bbox": [
+          251.24,
+          0.0,
+          349.23,
+          128.26
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.7874,
+        "bbox": [
+          204.71,
+          166.43,
+          302.31,
+          301.83
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.7578,
+        "bbox": [
+          289.28,
+          141.6,
+          387.76,
+          282.8
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.7527,
+        "bbox": [
+          0.44,
+          5.68,
+          71.21,
+          201.95
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.7124,
+        "bbox": [
+          157.86,
+          0.02,
+          260.03,
+          141.16
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.7062,
+        "bbox": [
+          33.0,
+          0.0,
+          161.42,
+          176.45
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.6747,
+        "bbox": [
+          339.8,
+          0.0,
+          438.05,
+          105.05
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.6174,
+        "bbox": [
+          5.38,
+          205.96,
+          129.83,
+          355.73
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.5189,
+        "bbox": [
+          206.67,
+          312.81,
+          258.33,
+          383.53
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.4032,
+        "bbox": [
+          306.77,
+          359.4,
+          393.12,
+          431.73
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.3883,
+        "bbox": [
+          338.09,
+          269.17,
+          405.28,
+          367.52
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.3875,
+        "bbox": [
+          283.41,
+          280.85,
+          340.89,
+          363.88
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.3822,
+        "bbox": [
+          427.54,
+          0.0,
+          504.44,
+          89.03
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.3734,
+        "bbox": [
+          255.23,
+          439.75,
+          303.19,
+          512.9
+        ]
+      },
+      {
+        "label": "bloco",
+        "confidence": 0.2911,
+        "bbox": [
+          305.44,
+          429.0,
+          365.71,
+          506.43
+        ]
+      }
+    ],
+    "error": null,
+    "python_executable": "/home/shroom/workspace/shroom-app/.venv311/bin/python3",
+    "python_version": "3.11.9 (main, Mar 18 2026, 22:08:28) [GCC 14.2.0]"
+  },
+  "summary": {
+    "lote_id": null,
+    "blocos_detectados": 15,
+    "confianca_media_blocos": 0.5699,
+    "block_detection_error": null,
+    "contaminacao_visual_detectada": false,
+    "colonizacao_estimada": null,
+    "quality_status": "valid",
+    "dataset_eligible": true,
+    "dataset_class": "valid",
+    "remote_persisted": true
+  },
+  "detections": [
+    {
+      "label": "bloco",
+      "confidence": 0.7951,
+      "bbox": [
+        251.24,
+        0.0,
+        349.23,
+        128.26
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.7874,
+      "bbox": [
+        204.71,
+        166.43,
+        302.31,
+        301.83
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.7578,
+      "bbox": [
+        289.28,
+        141.6,
+        387.76,
+        282.8
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.7527,
+      "bbox": [
+        0.44,
+        5.68,
+        71.21,
+        201.95
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.7124,
+      "bbox": [
+        157.86,
+        0.02,
+        260.03,
+        141.16
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.7062,
+      "bbox": [
+        33.0,
+        0.0,
+        161.42,
+        176.45
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.6747,
+      "bbox": [
+        339.8,
+        0.0,
+        438.05,
+        105.05
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.6174,
+      "bbox": [
+        5.38,
+        205.96,
+        129.83,
+        355.73
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.5189,
+      "bbox": [
+        206.67,
+        312.81,
+        258.33,
+        383.53
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.4032,
+      "bbox": [
+        306.77,
+        359.4,
+        393.12,
+        431.73
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.3883,
+      "bbox": [
+        338.09,
+        269.17,
+        405.28,
+        367.52
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.3875,
+      "bbox": [
+        283.41,
+        280.85,
+        340.89,
+        363.88
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.3822,
+      "bbox": [
+        427.54,
+        0.0,
+        504.44,
+        89.03
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.3734,
+      "bbox": [
+        255.23,
+        439.75,
+        303.19,
+        512.9
+      ]
+    },
+    {
+      "label": "bloco",
+      "confidence": 0.2911,
+      "bbox": [
+        305.44,
+        429.0,
+        365.71,
+        506.43
+      ]
+    }
+  ],
+  "notes": [
+    "Pipeline executado com quality check local e detector inicial de blocos.",
+    "A deteccao de colonizacao e contaminacao_visual ainda nao esta implementada.",
+    "Se o modelo YOLO nao existir, a deteccao retorna lista vazia sem quebrar o fluxo."
+  ],
+  "target_labels": [
+    "bloco",
+    "colonizacao",
+    "contaminacao_visual"
+  ],
+  "dataset_classification": {
+    "enabled": true,
+    "applied": true,
+    "dataset_class": "valid",
+    "quality_status": "valid",
+    "dataset_eligible": true,
+    "target_image_path": "vision/dataset/raw/valid/snapshot_20260411T183011936144Z.jpg",
+    "target_metadata_path": "vision/dataset/raw/valid/snapshot_20260411T183011936144Z.json",
+    "method": "hardlink",
+    "error": null
+  },
+  "remote_persistence": {
+    "enabled": true,
+    "remote_persisted": true,
+    "storage_uploaded": true,
+    "db_record_created": true,
+    "image_storage_path": "vision/captures/2026/04/11/snapshot_20260411T183011936144Z.jpg",
+    "record_id": "07a6514b-a1a9-43ed-9a32-cc4b43930a89",
+    "db_table": "vision_pipeline_runs",
+    "retry_manifest_path": null,
+    "error": null
+  },
+  "remote_persisted": true,
+  "storage_uploaded": true,
+  "db_record_created": true
+}
