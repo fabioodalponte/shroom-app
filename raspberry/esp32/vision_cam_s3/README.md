@@ -50,20 +50,6 @@ Camera validada localmente em `2026-04-07`:
 
 1. `device_name`: `vision-cam-colonizacao-01`
 2. `room_name`: `Colonizacao`
-3. `ip local`: `10.0.0.200`
-4. `capture_url`: `http://10.0.0.200/capture`
-5. `status_url`: `http://10.0.0.200/status`
-6. `health_url`: `http://10.0.0.200/health`
-
-Observacao:
-
-1. este IP e um endereco local atual da rede
-2. se o DHCP mudar, atualize `vision/config/vision_config_colonizacao.json`
-
-Camera validada localmente em `2026-04-07`:
-
-1. `device_name`: `vision-cam-frutificacao-01`
-2. `room_name`: `Frutificacao`
 3. `ip local`: `10.0.0.163`
 4. `capture_url`: `http://10.0.0.163/capture`
 5. `status_url`: `http://10.0.0.163/status`
@@ -72,7 +58,41 @@ Camera validada localmente em `2026-04-07`:
 Observacao:
 
 1. este IP e um endereco local atual da rede
+2. se o DHCP mudar, atualize `vision/config/vision_config_colonizacao.json`
+
+Camera validada localmente em `2026-04-13`:
+
+1. `device_name`: `vision-cam-frutificacao-01`
+2. `room_name`: `Frutificacao`
+3. `ip local`: `10.0.0.137`
+4. `capture_url`: `http://10.0.0.137/capture`
+5. `status_url`: `http://10.0.0.137/status`
+6. `health_url`: `http://10.0.0.137/health`
+
+Observacao:
+
+1. este IP e um endereco local atual da rede
 2. se o DHCP mudar, atualize `vision/config/vision_config_frutificacao.json`
+
+## Tunnel atual
+
+Configuracao atual do `cloudflared` em `2026-04-13`:
+
+1. `cam.cogumelos.net` -> `http://10.0.0.177`
+2. `cam-frutificacao.cogumelos.net` -> `http://10.0.0.137`
+3. `cam-colonizacao.cogumelos.net` -> `http://10.0.0.163`
+4. `raspberry.cogumelos.net` -> `ssh://localhost:22`
+5. `relay-sala1.cogumelos.net` -> `http://10.0.0.101`
+6. `rele-frutificacao.cogumelos.net` -> `http://10.0.0.200`
+
+Para acesso externo das cameras:
+
+1. `https://cam-frutificacao.cogumelos.net/status`
+2. `https://cam-frutificacao.cogumelos.net/health`
+3. `https://cam-frutificacao.cogumelos.net/capture`
+4. `https://cam-colonizacao.cogumelos.net/status`
+5. `https://cam-colonizacao.cogumelos.net/health`
+6. `https://cam-colonizacao.cogumelos.net/capture`
 
 ## Board profile
 

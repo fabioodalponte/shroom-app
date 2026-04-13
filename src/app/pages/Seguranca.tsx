@@ -9,7 +9,6 @@ import {
   Shield, 
   Activity, 
   AlertTriangle, 
-  Thermometer,
   Droplets,
   Wind,
   Radio,
@@ -142,6 +141,22 @@ interface SalaControllerStatus {
   relays?: Record<string, SalaControllerRelayState>;
 }
 
+interface FrutificacaoRelaySensors {
+  sht45?: {
+    ready?: boolean;
+    temperatureC?: number | null;
+    humidityPct?: number | null;
+  };
+  scd41?: {
+    ready?: boolean;
+    co2ppm?: number | null;
+  };
+}
+
+interface FrutificacaoRelayStatus extends SalaControllerStatus {
+  sensors?: FrutificacaoRelaySensors;
+}
+
 type SensorMetricKey = 'temperatura' | 'umidade' | 'co2' | 'luminosidade_lux';
 type TrendDirection = 'up' | 'down' | 'stable';
 
@@ -234,6 +249,14 @@ const DEFAULT_CAMERA_IMAGE_CONTROLS: CameraImageControls = {
   vflip: false,
   exposureCtrl: true,
 };
+
+const FRUTIFICACAO_RELAY_BASE_URL = 'https://rele-frutificacao.cogumelos.net';
+const FRUTIFICACAO_RELAY_CHANNELS = [
+  { relayNumber: 1, key: 'relay1', name: 'Ventilador_F' },
+  { relayNumber: 2, key: 'relay2', name: 'Luz_F' },
+  { relayNumber: 3, key: 'relay3', name: 'Aquecedor_F' },
+  { relayNumber: 4, key: 'relay4', name: 'Umidificador_F' },
+] as const;
 
 const PLANNED_VISION_CAMERAS: CameraConfig[] = [
   {
@@ -461,6 +484,10 @@ function getRelayIcon(relayName: string) {
   return Wind;
 }
 
+function formatNullableMetric(value: number | null | undefined, digits = 1) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '--';
+}
+
 function getSortedHistory(historico: SensorData[]) {
   return [...historico]
     .filter((item) => item.timestamp)
@@ -683,6 +710,13 @@ export function Seguranca() {
   const [lotes, setLotes] = useState<LoteMonitoramento[]>([]);
   const [cameras, setCameras] = useState<CameraConfig[]>([]);
   const [controladoresSala, setControladoresSala] = useState<SalaControllerConfig[]>([]);
+  const [frutificacaoRelayStatus, setFrutificacaoRelayStatus] = useState<FrutificacaoRelayStatus | null>(null);
+  const [frutificacaoRelayBaseUrl, setFrutificacaoRelayBaseUrl] = useState(FRUTIFICACAO_RELAY_BASE_URL);
+  const [frutificacaoRelayLoading, setFrutificacaoRelayLoading] = useState(false);
+  const [frutificacaoRelayCommand, setFrutificacaoRelayCommand] = useState<string | null>(null);
+  const [frutificacaoRelayInfo, setFrutificacaoRelayInfo] = useState<string | null>(null);
+  const [frutificacaoRelayError, setFrutificacaoRelayError] = useState<string | null>(null);
+  const [frutificacaoRelayUpdatedAt, setFrutificacaoRelayUpdatedAt] = useState<Date | null>(null);
   const [loteSelecionado, setLoteSelecionado] = useState<string>('todos');
   const [periodoHistorico, setPeriodoHistorico] = useState<'24h' | '7d'>('24h');
   const [statusVisualFilter, setStatusVisualFilter] = useState<'all' | 'critical' | 'normal'>('all');
@@ -716,6 +750,53 @@ export function Seguranca() {
     if (typeof window === 'undefined') return false;
     return window.matchMedia('(max-width: 640px)').matches;
   });
+
+  const applyFrutificacaoRelayPayload = useCallback((payload: any) => {
+    setFrutificacaoRelayBaseUrl(String(payload?.baseUrl || FRUTIFICACAO_RELAY_BASE_URL));
+    setFrutificacaoRelayStatus((payload?.status || null) as FrutificacaoRelayStatus | null);
+    setFrutificacaoRelayUpdatedAt(new Date());
+  }, []);
+
+  const carregarStatusRelayFrutificacao = useCallback(async (options?: { silent?: boolean }) => {
+    setFrutificacaoRelayLoading(true);
+    if (!options?.silent) {
+      setFrutificacaoRelayInfo(null);
+    }
+    setFrutificacaoRelayError(null);
+
+    try {
+      const result = await fetchServer('/frutificacao/relay/status');
+      applyFrutificacaoRelayPayload(result);
+      if (!options?.silent) {
+        setFrutificacaoRelayInfo('Status da frutificação atualizado.');
+      }
+    } catch (error: any) {
+      setFrutificacaoRelayError(error.message || 'Erro ao consultar relé da frutificação');
+    } finally {
+      setFrutificacaoRelayLoading(false);
+    }
+  }, [applyFrutificacaoRelayPayload]);
+
+  const controlarRelayFrutificacao = useCallback(async (relay: number, state: boolean) => {
+    setFrutificacaoRelayCommand(`relay${relay}:${state ? 'on' : 'off'}`);
+    setFrutificacaoRelayInfo(null);
+    setFrutificacaoRelayError(null);
+
+    try {
+      const result = await fetchServer('/frutificacao/relay/control', {
+        method: 'POST',
+        body: JSON.stringify({ relay, state }),
+      });
+
+      applyFrutificacaoRelayPayload(result);
+      const relayName = FRUTIFICACAO_RELAY_CHANNELS.find((item) => item.relayNumber === relay)?.name || `Relay ${relay}`;
+      setFrutificacaoRelayInfo(`${relayName} ${state ? 'ligado' : 'desligado'}.`);
+    } catch (error: any) {
+      setFrutificacaoRelayError(error.message || 'Erro ao acionar relé da frutificação');
+    } finally {
+      setFrutificacaoRelayCommand(null);
+    }
+  }, [applyFrutificacaoRelayPayload]);
 
   const carregarDados = useCallback(async () => {
     setLoading(true);
@@ -790,6 +871,16 @@ export function Seguranca() {
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
+
+  useEffect(() => {
+    void carregarStatusRelayFrutificacao({ silent: true });
+
+    const timerId = window.setInterval(() => {
+      void carregarStatusRelayFrutificacao({ silent: true });
+    }, 15000);
+
+    return () => window.clearInterval(timerId);
+  }, [carregarStatusRelayFrutificacao]);
 
   useEffect(() => {
     if (!cameraDialogOpen || !autoAtualizarCamera || !cameraSelecionada?.url_stream) return;
@@ -1268,6 +1359,14 @@ export function Seguranca() {
       };
     });
   }, [controladorSelecionado, controladorStatus]);
+
+  const frutificacaoRelayEntries = useMemo(() => (
+    FRUTIFICACAO_RELAY_CHANNELS.map((channel) => ({
+      ...channel,
+      state: Boolean(frutificacaoRelayStatus?.relays?.[channel.key]?.state),
+      icon: getRelayIcon(channel.name),
+    }))
+  ), [frutificacaoRelayStatus?.relays]);
 
   const lotesFiltrados = loteSelecionado === 'todos' 
     ? lotes 
@@ -1850,6 +1949,143 @@ export function Seguranca() {
 
       <section className="security-toolbar-card">
         <div className="security-toolbar-card__copy">
+          <span className="security-section-kicker">Frutificação</span>
+          <h2 className="security-section-title">Relé da Frutificação</h2>
+          <p className="security-section-copy">
+            Telemetria ambiental e acionamento dos 4 canais usando o tunnel público, com proxy autenticado no backend.
+          </p>
+        </div>
+
+        <div className="mt-6 space-y-4">
+          <div className="grid gap-3 md:grid-cols-5">
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-[#6a7461]">Modo</p>
+                <p className="mt-2 text-lg font-semibold capitalize text-[#243126]">
+                  {frutificacaoRelayStatus?.mode || '--'}
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-[#6a7461]">Temperatura</p>
+                <p className="mt-2 text-lg font-semibold text-[#243126]">
+                  {formatNullableMetric(frutificacaoRelayStatus?.sensors?.sht45?.temperatureC, 1)}°C
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-[#6a7461]">Umidade</p>
+                <p className="mt-2 text-lg font-semibold text-[#243126]">
+                  {formatNullableMetric(frutificacaoRelayStatus?.sensors?.sht45?.humidityPct, 1)}%
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-[#6a7461]">CO2</p>
+                <p className="mt-2 text-lg font-semibold text-[#243126]">
+                  {formatNullableMetric(frutificacaoRelayStatus?.sensors?.scd41?.co2ppm, 0)} ppm
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-[#6a7461]">Última atualização</p>
+                <p className="mt-2 text-sm font-medium text-[#243126]">
+                  {frutificacaoRelayUpdatedAt
+                    ? formatDistanceToNowStrict(frutificacaoRelayUpdatedAt, { addSuffix: true, locale: ptBR })
+                    : 'Aguardando leitura'}
+                </p>
+                <p className="mt-1 text-xs text-[#6a7461] break-all">
+                  {frutificacaoRelayBaseUrl}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => void carregarStatusRelayFrutificacao()}
+              disabled={frutificacaoRelayLoading || !!frutificacaoRelayCommand}
+            >
+              <RefreshCcw className="mr-2 h-4 w-4" />
+              {frutificacaoRelayLoading ? 'Atualizando...' : 'Atualizar relé'}
+            </Button>
+            <Badge variant="outline" className="px-3 py-1 text-xs uppercase tracking-[0.16em]">
+              Proxy Supabase
+            </Badge>
+            <Badge variant="outline" className="px-3 py-1 text-xs uppercase tracking-[0.16em]">
+              Tunnel público
+            </Badge>
+          </div>
+
+          {frutificacaoRelayInfo && (
+            <p className="text-xs text-green-700">{frutificacaoRelayInfo}</p>
+          )}
+          {frutificacaoRelayError && (
+            <p className="text-xs text-red-600">{frutificacaoRelayError}</p>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {frutificacaoRelayEntries.map((relay) => {
+              const Icon = relay.icon;
+              const isRunning = frutificacaoRelayCommand === `${relay.key}:on` || frutificacaoRelayCommand === `${relay.key}:off`;
+
+              return (
+                <Card key={relay.key} className={relay.state ? 'border-green-200 bg-green-50/70' : 'border-[#d9ddcf]'}>
+                  <CardContent className="space-y-4 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`rounded-full p-2 ${relay.state ? 'bg-green-100 text-green-700' : 'bg-[#eef1e8] text-[#546A4A]'}`}>
+                          <Icon className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.16em] text-[#6a7461]">Canal {relay.relayNumber}</p>
+                          <p className="text-sm font-semibold text-[#243126]">{relay.name}</p>
+                        </div>
+                      </div>
+                      <Badge className={relay.state ? 'bg-green-100 text-green-700' : 'bg-[#eef1e8] text-[#546A4A]'}>
+                        {relay.state ? 'Ligado' : 'Desligado'}
+                      </Badge>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        variant={relay.state ? 'outline' : 'default'}
+                        onClick={() => void controlarRelayFrutificacao(relay.relayNumber, true)}
+                        disabled={!!frutificacaoRelayCommand}
+                      >
+                        {isRunning && frutificacaoRelayCommand?.endsWith(':on') ? 'Ligando...' : 'Ligar'}
+                      </Button>
+                      <Button
+                        variant={relay.state ? 'destructive' : 'outline'}
+                        onClick={() => void controlarRelayFrutificacao(relay.relayNumber, false)}
+                        disabled={!!frutificacaoRelayCommand}
+                      >
+                        {isRunning && frutificacaoRelayCommand?.endsWith(':off') ? 'Desligando...' : 'Desligar'}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          <div className="rounded-lg border border-dashed border-[#d9ddcf] bg-[#fbfcf8] p-3 text-xs text-[#5e6756]">
+            O app usa o proxy autenticado da Supabase Function para consultar `GET /status` e acionar `GET /ui/relay?relay=N&state=on|off`.
+          </div>
+        </div>
+      </section>
+
+      <section className="security-toolbar-card">
+        <div className="security-toolbar-card__copy">
           <span className="security-section-kicker">Monit. central</span>
           <h2 className="security-section-title">Monitoramento de Salas</h2>
           <p className="security-section-copy">
@@ -1883,7 +2119,14 @@ export function Seguranca() {
               </SelectContent>
             </Select>
 
-            <Button variant="outline" onClick={() => void carregarDados()} className="security-toolbar__refresh">
+            <Button
+              variant="outline"
+              onClick={() => {
+                void carregarDados();
+                void carregarStatusRelayFrutificacao({ silent: true });
+              }}
+              className="security-toolbar__refresh"
+            >
               <RefreshCcw className="h-4 w-4" />
               Atualizar
             </Button>

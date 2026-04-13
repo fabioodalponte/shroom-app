@@ -11,6 +11,7 @@ const app = new Hono();
 const isAdminUser = (user: any) => String(user?.tipo_usuario || '').toLowerCase() === 'admin';
 const SENSOR_INGEST_HEADER = 'x-sensores-key';
 const CONTROLADOR_REQUEST_TIMEOUT_MS = 8000;
+const FRUTIFICACAO_RELAY_BASE_URL = 'https://rele-frutificacao.cogumelos.net';
 
 function isTruthy(value: string | null | undefined) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -1994,6 +1995,69 @@ app.post("/make-server-5522cecf/controladores/:id/mode", async (c) => {
   } catch (error) {
     console.error('Erro ao alterar modo do controlador:', error);
     return c.json({ error: error.message || 'Erro ao alterar modo do controlador' }, 502);
+  }
+});
+
+app.get("/make-server-5522cecf/frutificacao/relay/status", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const status = await callControladorSala(
+      { base_url: FRUTIFICACAO_RELAY_BASE_URL },
+      '/status',
+      { method: 'GET' },
+    );
+
+    return c.json({
+      baseUrl: FRUTIFICACAO_RELAY_BASE_URL,
+      status,
+    });
+  } catch (error) {
+    console.error('Erro ao consultar status do relé da frutificação:', error);
+    return c.json({ error: error.message || 'Erro ao consultar relé da frutificação' }, 502);
+  }
+});
+
+app.post("/make-server-5522cecf/frutificacao/relay/control", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    await auth.requireAuth(accessToken ?? null);
+
+    const body = await c.req.json();
+    const relay = Number(body?.relay);
+    const state = body?.state;
+
+    if (![1, 2, 3, 4].includes(relay)) {
+      return c.json({ error: 'relay deve ser 1..4' }, 400);
+    }
+
+    if (typeof state !== 'boolean') {
+      return c.json({ error: 'state deve ser boolean' }, 400);
+    }
+
+    const action = state ? 'on' : 'off';
+    const commandPath = `/ui/relay?relay=${relay}&state=${action}`;
+
+    await callControladorSala(
+      { base_url: FRUTIFICACAO_RELAY_BASE_URL },
+      commandPath,
+      { method: 'GET' },
+    );
+
+    const status = await callControladorSala(
+      { base_url: FRUTIFICACAO_RELAY_BASE_URL },
+      '/status',
+      { method: 'GET' },
+    );
+
+    return c.json({
+      baseUrl: FRUTIFICACAO_RELAY_BASE_URL,
+      status,
+    });
+  } catch (error) {
+    console.error('Erro ao acionar relé da frutificação:', error);
+    return c.json({ error: error.message || 'Erro ao acionar relé da frutificação' }, 502);
   }
 });
 
